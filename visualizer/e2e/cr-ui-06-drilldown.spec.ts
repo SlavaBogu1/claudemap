@@ -5,10 +5,13 @@ import { makeProject, makeSessions, mockApi, clickGraphNode, clickBanner, makeSe
 // GET /api/projects/:id/sessions/:sessionId/detail — never a live Indexer server.
 //
 // CR-UI-07 (Sprint 3) changed how drill-down is triggered: clicking the session node body no
-// longer expands children (that's now exclusively a per-banner action) — see cr-ui-07-banners.spec.ts
-// for the full per-type banner behavior. These tests are updated to trigger expansion via the
-// banners, per the confirmed CR-UI-07 behavior change, while still covering CR-UI-06's original
-// substructure/visual-treatment guarantees.
+// longer expanded children (that was made exclusively a per-banner action) — see
+// cr-ui-07-banners.spec.ts for the full per-type banner behavior. These tests trigger expansion via
+// the banners, while still covering CR-UI-06's original substructure/visual-treatment guarantees.
+//
+// CR-UI-07 (reopen, Sprint 4): body-click expand-all/collapse-all is restored as an ADDITION
+// alongside the per-banner toggles (not a replacement) — see the inverted regression test below and
+// cr-ui-07-banners.spec.ts for the full body-click behavior matrix.
 
 async function nodeTypeCounts(page: import("@playwright/test").Page) {
   return page.evaluate(() => {
@@ -120,7 +123,7 @@ test.describe("CR-UI-06 — session-substructure drill-down", () => {
     await expect(page.locator(".error-text")).toHaveCount(0);
   });
 
-  test("CR-UI-07 regression: clicking the session node body no longer expands children", async ({
+  test("CR-UI-07 (reopen) — inverted regression: clicking the session node body now toggles expand-all/collapse-all across all 3 drill-down types", async ({
     page,
   }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 5 });
@@ -140,12 +143,23 @@ test.describe("CR-UI-06 — session-substructure drill-down", () => {
 
     await page.goto("/");
     await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
+    // Timeline mode keeps drill-down children well clear of the session's own footprint (a fixed
+    // y-offset row below it) — deterministic, unlike the default force-directed layout where a
+    // freshly-added child could physically land on top of the session node and steal the second
+    // click below.
+    await page.getByLabel("Layout").selectOption("timeline");
     await expect(page.getByTestId("graph-status")).toHaveAttribute("data-node-count", "6");
 
     await clickGraphNode(page, target.id);
-    // Detail panel updates (selection still works)...
-    await expect(page.getByTestId("session-preview")).toHaveText(target.preview);
-    // ...but no child nodes were added.
+    // Detail panel updates (selection still works)... CR-UI-26 (Sprint 5): "session-preview" now
+    // shows the item's note (or "no notes"), not session.preview.
+    await expect(page.getByTestId("session-preview")).toHaveText("This item has no notes.");
+    // ...and all 3 drill-down types expand (restored Sprint-4 behavior).
+    await expect(page.getByTestId("graph-status")).toHaveAttribute("data-node-count", "9");
+    expect(await nodeTypeCounts(page)).toEqual({ subagent: 1, memory: 1, tool: 1 });
+
+    // Clicking the body again collapses all 3 back to baseline.
+    await clickGraphNode(page, target.id);
     await expect(page.getByTestId("graph-status")).toHaveAttribute("data-node-count", "6");
     expect(await nodeTypeCounts(page)).toEqual({ subagent: 0, memory: 0, tool: 0 });
   });

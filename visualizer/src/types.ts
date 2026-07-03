@@ -22,6 +22,11 @@ export interface Session {
   // backward compatibility (equivalent to `memoryTouchCount > 0`).
   memoryTouchCount: number;
   toolResultCount: number;
+  // CR-UI-28 (Sprint 5): documented Indexer v1.8 addition — true if this session itself or any of
+  // its subagent/memory-touch/tool sub-items has a saved note, computed server-side so the note
+  // badge can show on a collapsed (never drilled-into) session without an eager per-session
+  // `.../detail` fetch.
+  hasNotedDescendant: boolean;
 }
 
 export type LayoutName = "cose" | "breadthfirst" | "timeline";
@@ -50,7 +55,10 @@ export const DEFAULT_SORT: SortName = "date-desc";
 // CR-UI-06 (Sprint 2): documented Indexer v1.3 addition, session-substructure drill-down.
 // See _API_CONTRACT/CONTRACT.md GET /api/projects/:id/sessions/:sessionId/detail.
 export interface SessionDetail {
-  subagents: { agentId: string; agentType: string; description: string }[];
+  // CR-UI-15 (Sprint 5): `filePath` ("Agent Path", Indexer v1.6) — the subagent's own transcript
+  // file when one exists on disk, else its `.meta.json` path as a fallback. Never undefined for a
+  // subagent the Indexer discovered at all.
+  subagents: { agentId: string; agentType: string; description: string; filePath: string }[];
   memoryTouches: { filePath: string; name: string | null }[];
   overflows: { toolUseId: string; filePath: string }[];
 }
@@ -81,6 +89,16 @@ export interface SessionContent {
   messages: SessionContentMessage[];
 }
 
+// CR-UI-25 (Sprint 5): documented Indexer v1.7 addition. See _API_CONTRACT/CONTRACT.md
+// GET /api/projects/:id/content — project-level content, resolved server-side in priority order
+// README.md -> CLAUDE.md -> earliest session's first user message -> none.
+export type ProjectContentSource = "readme" | "claude-md" | "first-message" | "none";
+
+export interface ProjectContent {
+  source: ProjectContentSource;
+  content: string | null;
+}
+
 // CR-UI-08 (Sprint 3): the currently-selected graph item, generalized beyond CR-UI-01's
 // session-only selection so any node type can drive the Detail panel's new Content tab. `rawId` is
 // the bare identifier the notes/content API expects as `nodeId` (see `NodeType` above); `label` is
@@ -89,4 +107,19 @@ export interface SelectedGraphItem {
   nodeType: NodeType;
   rawId: string;
   label: string;
+  // CR-UI-04 (Sprint 4): the owning session's id — populated for a "session" selection (its own id)
+  // and for any session sub-item (subagent/memoryTouch/tool, from that child's `parentSessionId`);
+  // omitted for "project" (no session concept). Drives the Detail panel's Info-tab Resume command
+  // field (reopen, Sprint 5: no longer a separate Terminal tab), which always
+  // needs the *parent session's* id even when a sub-item is selected (there's no per-sub-item resume
+  // concept) — a purely client-side Visualizer selection-model field, not part of the Indexer API
+  // contract (`_API_CONTRACT/CONTRACT.md`'s `NodeType`/note-key vocabulary is unchanged).
+  sessionId?: string;
+  // CR-UI-15 (Sprint 5): the real on-disk file path backing a subagent ("Agent Path") or tool
+  // ("Tool Path") item — populated by GraphCanvas.tsx from `SessionDetail.subagents[].filePath` /
+  // `overflows[].filePath` when that child node is tapped. Distinct from `rawId`, which for these
+  // two types is the notes/content API's `nodeId` (`agentId`/`toolUseId`), not a file path. Omitted
+  // for "memoryTouch" (its `rawId` already *is* the file path) and for "project"/"session" (no
+  // per-item file beyond the project's own folder path).
+  filePath?: string;
 }

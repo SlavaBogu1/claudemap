@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { makeProject, makeSessions, mockApi, clickBanner, makeSessionDetail } from "./fixtures";
+import { makeProject, makeSessions, mockApi, clickBanner, dragGraphNode, makeSessionDetail } from "./fixtures";
 
 // CR-UI-09 acceptance criteria (VZ-3.4/3.5): drill-down children in Timeline mode must never
 // overlap, at any child count, and the radius must have a sensible minimum for 1-2 children.
@@ -137,5 +137,58 @@ test.describe("CR-UI-09 — Timeline drill-down child overlap fix", () => {
     await expect(page.getByTestId("graph-status")).toHaveAttribute("data-node-count", "7");
     const positions = await childPositions(page);
     expect(positions).toHaveLength(3);
+  });
+
+  test("CR-UI-09 (reopen): dragging a session then expanding its drill-down clusters children near the dragged position, not the stale pre-drag one", async ({
+    page,
+  }) => {
+    const project = makeProject({ id: "sudoku", sessionCount: 3 });
+    const sessions = makeSessions(3);
+    const target = sessions[0];
+    const detail = makeSessionDetail({
+      subagents: [{ agentId: "a1", agentType: "general-purpose", description: "sub" }],
+      memoryTouches: [{ filePath: "memory/topic.md", name: "topic.md" }],
+    });
+
+    await mockApi(page, {
+      projects: [project],
+      sessionsByProjectId: { sudoku: sessions },
+      sessionDetailByKey: { [`sudoku/${target.id}`]: detail },
+    });
+
+    await page.goto("/");
+    await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
+    await page.getByLabel("Layout").selectOption("timeline");
+    await expect(page.getByTestId("graph-status")).toHaveAttribute("data-layout", "timeline");
+
+    const originalPos = await page.evaluate((id) => {
+      const cy = (window as unknown as { __cy: import("cytoscape").Core }).__cy;
+      return cy.getElementById(id).position();
+    }, target.id);
+
+    await dragGraphNode(page, target.id, 300, 220);
+
+    const draggedPos = await page.evaluate((id) => {
+      const cy = (window as unknown as { __cy: import("cytoscape").Core }).__cy;
+      return cy.getElementById(id).position();
+    }, target.id);
+    // Sanity: the drag actually moved the node meaningfully in model space.
+    expect(Math.hypot(draggedPos.x - originalPos.x, draggedPos.y - originalPos.y)).toBeGreaterThan(80);
+
+    await clickBanner(page, target.id, "subagent");
+    await clickBanner(page, target.id, "memory");
+    await expect(page.getByTestId("graph-status")).toHaveAttribute("data-node-count", "6"); // project + 3 sessions + 2 children
+
+    const positions = await childPositions(page);
+    expect(positions).toHaveLength(2);
+
+    // Every child clusters closer to the session's CURRENT (dragged) position than to its stale
+    // pre-drag one — the CR-UI-09 (reopen) root cause was resolving parentPos from
+    // computeTimelinePositions (pre-drag) instead of the node's live position.
+    for (const p of positions) {
+      const distFromDragged = Math.hypot(p.x - draggedPos.x, p.y - draggedPos.y);
+      const distFromOriginal = Math.hypot(p.x - originalPos.x, p.y - originalPos.y);
+      expect(distFromDragged).toBeLessThan(distFromOriginal);
+    }
   });
 });

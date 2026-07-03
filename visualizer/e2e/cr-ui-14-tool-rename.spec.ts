@@ -36,8 +36,9 @@ test.describe("CR-UI-14 — Overflow renamed to Tool", () => {
     });
 
     expect(toolNodeInfo.count).toBe(1);
-    expect(toolNodeInfo.label).toContain("⚙ Tool");
-    expect(toolNodeInfo.label).toContain("tool_x.txt");
+    // CR-UI-22 (Sprint 4): label simplified to the fixed "⚙ Tool log" text — the filename no longer
+    // appears in-label.
+    expect(toolNodeInfo.label).toBe("⚙ Tool log");
     expect(toolNodeInfo.label).not.toContain("Overflow");
 
     // No lingering "overflow" typed node anywhere in the graph.

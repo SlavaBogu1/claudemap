@@ -11,6 +11,9 @@ import {
   clampDetailPanelWidth,
   getShowBanners,
   setShowBanners,
+  getPreferredTheme,
+  setPreferredTheme,
+  type ThemeName,
 } from "./lib/preferences";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { LayoutSwitcher } from "./components/LayoutSwitcher";
@@ -29,7 +32,21 @@ function App() {
   const [sort, setSort] = useState<SortName>(() => getPreferredSort());
   // CR-UI-07 (D23): banner-row visibility — Preferences-only control (no header quick shortcut).
   const [showBanners, setShowBannersState] = useState<boolean>(() => getShowBanners());
+  // CR-UI-24 (D23): Light/Dark/System theme — Preferences-only control (no header quick shortcut).
+  const [theme, setThemeState] = useState<ThemeName>(() => getPreferredTheme());
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  // CR-UI-24: apply the theme by setting `document.documentElement.dataset.theme` to "light"/
+  // "dark", or removing the attribute entirely for "system" — the existing `prefers-color-scheme`
+  // media query then keeps controlling it, unchanged default behavior for anyone who never touches
+  // this setting.
+  useEffect(() => {
+    if (theme === "system") {
+      delete document.documentElement.dataset.theme;
+    } else {
+      document.documentElement.dataset.theme = theme;
+    }
+  }, [theme]);
 
   // CR-UI-11: Detail panel width, live-resizable via the drag handle below and persisted so it
   // survives a reload.
@@ -111,23 +128,46 @@ function App() {
     setShowBannersState(next);
   }
 
+  function handleThemeChange(next: ThemeName) {
+    setPreferredTheme(next);
+    setThemeState(next);
+  }
+
   // CR-UI-08: applied optimistically from the Content tab's Save/Delete so the 📝 indicator and any
   // other note-driven UI update immediately, without a full notes refetch.
+  // CR-UI-28 (Sprint 5): a note mutation on a session sub-item (subagent/memoryTouch/tool) can make
+  // its *parent* session's server-computed `hasNotedDescendant` go stale — that field lives on
+  // `GET .../sessions`, not the `notes` list above, so re-fetch the sessions list too (best-effort;
+  // a failure here just leaves the badge one mutation behind, not a broken app).
   function handleNoteSaved(note: NoteEntry) {
     setNotes((prev) => [
       ...prev.filter((n) => !(n.nodeType === note.nodeType && n.nodeId === note.nodeId)),
       note,
     ]);
+    refetchSessionsForNotedDescendant();
   }
 
   function handleNoteDeleted(nodeType: NodeType, nodeId: string) {
     setNotes((prev) => prev.filter((n) => !(n.nodeType === nodeType && n.nodeId === nodeId)));
+    refetchSessionsForNotedDescendant();
   }
 
-  // CR-UI-11: drag-to-resize the Detail panel. The handle sits between `.canvas-area` (flex: 1,
-  // shrinks/grows to fill the remainder) and `.detail-panel` (explicit pixel width, clamped to
-  // [DETAIL_PANEL_MIN_WIDTH, DETAIL_PANEL_MAX_WIDTH]). Dragging left grows the panel (mouse moves
-  // toward the canvas), dragging right shrinks it — hence `startWidth - delta`.
+  function refetchSessionsForNotedDescendant() {
+    if (!selectedProjectId) return;
+    fetchSessions(selectedProjectId)
+      .then((s) => setSessions(s))
+      .catch(() => {
+        // Best-effort — a failed refetch just leaves hasNotedDescendant as it was, not a crash.
+      });
+  }
+
+  // CR-UI-11 (reopen, Sprint 5): drag-to-resize the Detail panel. The handle sits between
+  // `.canvas-area` (flex: 1, shrinks/grows to fill the remainder) and `.detail-panel` (width now a
+  // percent of viewport width, clamped to [DETAIL_PANEL_MIN_WIDTH, DETAIL_PANEL_MAX_WIDTH] and
+  // rendered via `vw` units for automatic responsive rescaling on window resize). Dragging left
+  // grows the panel (mouse moves toward the canvas), dragging right shrinks it — hence
+  // `startWidth - deltaPercent`. The raw pixel drag delta is converted to a percent-of-window-width
+  // delta before clamping, since the stored/compared value is now a percent, not px.
   const handleResizeMouseDown = useCallback(
     (e: React.MouseEvent<HTMLDivElement>) => {
       e.preventDefault();
@@ -136,8 +176,9 @@ function App() {
       let currentWidth = startWidth;
 
       function handleMouseMove(moveEvent: MouseEvent) {
-        const delta = moveEvent.clientX - startX;
-        currentWidth = clampDetailPanelWidth(startWidth - delta);
+        const deltaPx = moveEvent.clientX - startX;
+        const deltaPercent = (deltaPx / window.innerWidth) * 100;
+        currentWidth = clampDetailPanelWidth(startWidth - deltaPercent);
         setDetailPanelWidth(currentWidth);
       }
       function handleMouseUp() {
@@ -163,7 +204,11 @@ function App() {
           onProjectsAdded={handleProjectsAdded}
         />
         <LayoutSwitcher layout={layout} onChange={setLayout} />
-        <SortSwitcher sort={sort} onChange={handleSortChange} />
+        {/* CR-UI-23: the header Sort control is disabled outside Hierarchical ("breadthfirst") —
+            only that layout actually visualizes sort order (see GraphCanvas.tsx's layoutOptionsFor).
+            The Preferences panel's "Default sort" field is a separate control and stays always
+            editable regardless of the current layout (see PreferencesPanel below). */}
+        <SortSwitcher sort={sort} onChange={handleSortChange} disabled={layout !== "breadthfirst"} />
         <BurgerMenu
           preferredLayout={layout}
           onPreferredLayoutChange={handlePreferredLayoutChange}
@@ -171,6 +216,8 @@ function App() {
           onPreferredSortChange={handleSortChange}
           showBanners={showBanners}
           onShowBannersChange={handleShowBannersChange}
+          theme={theme}
+          onThemeChange={handleThemeChange}
         />
       </header>
 
@@ -189,6 +236,7 @@ function App() {
               showBanners={showBanners}
               onSelectItem={setSelectedItem}
               notedKeys={notedKeys}
+              theme={theme}
             />
           ) : (
             <p className="hint centered">Select a project to view its session graph.</p>

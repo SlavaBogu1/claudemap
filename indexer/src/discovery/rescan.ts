@@ -125,7 +125,15 @@ function rescanProjectSessions(
         if (!subEntry.isFile() || !subEntry.name.endsWith(".meta.json")) continue;
         const metaPath = path.join(subagentsDir, subEntry.name);
         const record = parseSubagentMeta(metaPath, sessionId, logger);
-        if (record) subagentRecords.push(record);
+        if (record) {
+          // "Agent Path" (CR-UI-15) / IX-5.1 finding: real subagent data always ships a sibling
+          // {agentId}.jsonl transcript alongside the .meta.json (confirmed against fixture +
+          // production Sudoku/Terraza projects) — prefer that as the richer content source, but
+          // fall back to the meta.json's own path so this is never null for a discovered subagent.
+          const transcriptPath = metaPath.slice(0, -".meta.json".length) + ".jsonl";
+          record.filePath = fs.existsSync(transcriptPath) ? transcriptPath : metaPath;
+          subagentRecords.push(record);
+        }
       }
     }
 

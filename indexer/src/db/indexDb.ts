@@ -47,6 +47,7 @@ export function openIndexDb(filePath: string): IndexDb {
       agent_type TEXT,
       description TEXT,
       tool_use_id TEXT,
+      file_path TEXT,
       PRIMARY KEY (session_id, agent_id)
     );
 
@@ -141,11 +142,11 @@ export function upsertSession(db: IndexDb, s: UpsertSessionInput): void {
 export function replaceSubagents(db: IndexDb, sessionId: string, records: SubagentRecord[]): void {
   db.prepare(`DELETE FROM subagents WHERE session_id = ?`).run(sessionId);
   const insert = db.prepare(
-    `INSERT INTO subagents (session_id, agent_id, agent_type, description, tool_use_id)
-     VALUES (?, ?, ?, ?, ?)`
+    `INSERT INTO subagents (session_id, agent_id, agent_type, description, tool_use_id, file_path)
+     VALUES (?, ?, ?, ?, ?, ?)`
   );
   for (const r of records) {
-    insert.run(sessionId, r.agentId, r.agentType, r.description, r.toolUseId);
+    insert.run(sessionId, r.agentId, r.agentType, r.description, r.toolUseId, r.filePath);
   }
 }
 
@@ -283,7 +284,11 @@ export function listSessions(db: IndexDb, projectId: string): SessionEntry[] {
     subagentCount: r.subagentCount,
     touchedMemory: !!r.touchedMemory,
     memoryTouchCount: r.memoryTouchCount,
-    toolResultCount: r.toolResultCount
+    toolResultCount: r.toolResultCount,
+    // Computed by the caller (routes/projects.ts), which also needs annotations.db's notes table —
+    // the two SQLite files are never merged/joined at the SQL level (D16). Defaulted here so this
+    // function alone still returns a fully-shaped SessionEntry[].
+    hasNotedDescendant: false
   }));
 }
 
@@ -307,6 +312,73 @@ export function memoryFileExists(db: IndexDb, projectId: string, filePath: strin
   return !!row;
 }
 
+/**
+ * Whether `filePath` is a known subagent file (transcript or meta.json, per `SubagentRecord.filePath`)
+ * for `projectId` — the security check GET .../agent-content relies on before ever touching the
+ * filesystem with a query-param path (CR-UI-15, mirrors `memoryFileExists`'s pattern).
+ */
+export function subagentFileExists(db: IndexDb, projectId: string, filePath: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM subagents sub
+       JOIN sessions s ON s.id = sub.session_id
+       WHERE s.project_id = ? AND sub.file_path = ?`
+    )
+    .get(projectId, filePath);
+  return !!row;
+}
+
+/**
+ * Whether `filePath` is a known tool-result overflow file for `projectId` — the security check
+ * GET .../tool-content relies on before ever touching the filesystem with a query-param path
+ * (CR-UI-15, mirrors `memoryFileExists`'s pattern).
+ */
+export function toolResultFileExists(db: IndexDb, projectId: string, filePath: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM tool_result_overflows tro
+       JOIN sessions s ON s.id = tro.session_id
+       WHERE s.project_id = ? AND tro.file_path = ?`
+    )
+    .get(projectId, filePath);
+  return !!row;
+}
+
+export interface SessionDescendantNodeRef {
+  sessionId: string;
+  nodeType: "subagent" | "memoryTouch" | "tool";
+  nodeId: string;
+}
+
+/**
+ * Every (sessionId, nodeType, nodeId) sub-item reference for a project's sessions — subagents,
+ * memory touches, and tool-result overflows, each already `session_id`-keyed in index.db.
+ * (CR-UI-28) The caller (routes/projects.ts) cross-references this against annotations.db's
+ * `notes` table in application code (never a SQL-level join across the two DB files, D16) to
+ * compute `hasNotedDescendant` for GET /api/projects/:id/sessions.
+ */
+export function listSessionDescendantNodeRefs(db: IndexDb, projectId: string): SessionDescendantNodeRef[] {
+  const rows = db
+    .prepare(
+      `SELECT s.id AS sessionId, 'subagent' AS nodeType, sub.agent_id AS nodeId
+       FROM subagents sub
+       JOIN sessions s ON s.id = sub.session_id
+       WHERE s.project_id = @projectId
+       UNION ALL
+       SELECT s.id AS sessionId, 'memoryTouch' AS nodeType, smt.file_path AS nodeId
+       FROM session_memory_touches smt
+       JOIN sessions s ON s.id = smt.session_id
+       WHERE s.project_id = @projectId
+       UNION ALL
+       SELECT s.id AS sessionId, 'tool' AS nodeType, tro.tool_use_id AS nodeId
+       FROM tool_result_overflows tro
+       JOIN sessions s ON s.id = tro.session_id
+       WHERE s.project_id = @projectId AND tro.tool_use_id IS NOT NULL`
+    )
+    .all({ projectId }) as SessionDescendantNodeRef[];
+  return rows;
+}
+
 export function sessionExists(db: IndexDb, projectId: string, sessionId: string): boolean {
   const row = db
     .prepare(`SELECT 1 FROM sessions WHERE project_id = ? AND id = ?`)
@@ -317,12 +389,17 @@ export function sessionExists(db: IndexDb, projectId: string, sessionId: string)
 export function getSessionDetail(db: IndexDb, sessionId: string): SessionDetail {
   const subagents = db
     .prepare(
-      `SELECT agent_id AS agentId, agent_type AS agentType, description
+      `SELECT agent_id AS agentId, agent_type AS agentType, description, file_path AS filePath
        FROM subagents
        WHERE session_id = ?
        ORDER BY agent_id`
     )
-    .all(sessionId) as { agentId: string; agentType: string | null; description: string | null }[];
+    .all(sessionId) as {
+    agentId: string;
+    agentType: string | null;
+    description: string | null;
+    filePath: string | null;
+  }[];
 
   const memoryTouches = db
     .prepare(

@@ -23,6 +23,26 @@
   }
 }
 
+/* CR-UI-24 (Sprint 5): explicit Light/Dark theme choice, applied via `data-theme` on `<html>`
+   (App.tsx). Attribute selectors win over the `prefers-color-scheme` media query above, so an
+   explicit choice always overrides the OS preference; "system" (no attribute set) falls back to
+   the media query, unchanged pre-CR behavior. */
+:root[data-theme="dark"] {
+  --text: #9ca3af;
+  --text-h: #f3f4f6;
+  --bg: #16171d;
+  --border: #2e303a;
+  --accent: #c084fc;
+}
+
+:root[data-theme="light"] {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --border: #e5e4e7;
+  --accent: #aa3bff;
+}
+
 * {
   box-sizing: border-box;
 }

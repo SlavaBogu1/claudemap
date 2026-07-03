@@ -3,10 +3,11 @@ import { makeProject, makeSessions, mockApi } from "./fixtures";
 
 // CR-UI-12 acceptance criteria (VZ-3.16/3.17, D23 audit): PreferencesPanel.tsx holds a working
 // control for every customizable option shipped so far — default layout (CR-UI-02), default sort
-// (CR-UI-10), show/hide banners (CR-UI-07) — all present and functional. Against a mocked API only.
+// (CR-UI-10), show/hide banners (CR-UI-07), theme (CR-UI-24, Sprint 5) — all present and
+// functional. Against a mocked API only.
 
 test.describe("CR-UI-12 — Preferences panel audit (D23)", () => {
-  test("Preferences shows all three fields, each present and functional", async ({ page }) => {
+  test("Preferences shows all four fields, each present and functional", async ({ page }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 3 });
     await mockApi(page, { projects: [project], sessionsByProjectId: { sudoku: makeSessions(3) } });
 
@@ -14,10 +15,11 @@ test.describe("CR-UI-12 — Preferences panel audit (D23)", () => {
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
 
-    // All three fields are present with a working control.
+    // All four fields are present with a working control.
     await expect(page.getByLabel(/default graph layout/i)).toBeVisible();
     await expect(page.getByLabel(/default sort/i)).toBeVisible();
     await expect(page.getByLabel(/show session banners/i)).toBeVisible();
+    await expect(page.getByLabel(/theme/i)).toBeVisible();
 
     // Each control is genuinely functional (changing it takes effect), not just rendered.
     await page.getByLabel(/default graph layout/i).selectOption("timeline");
@@ -31,11 +33,14 @@ test.describe("CR-UI-12 — Preferences panel audit (D23)", () => {
     await page.getByLabel(/show session banners/i).check();
     await expect(page.getByLabel(/show session banners/i)).toBeChecked();
 
+    await page.getByLabel(/theme/i).selectOption("dark");
+    await expect(page.getByLabel(/theme/i)).toHaveValue("dark");
+
     // The panel is scannable — no unlabeled controls (every input has an associated label).
     const modal = page.locator(".modal");
     const inputs = modal.locator("select, input");
     const count = await inputs.count();
-    expect(count).toBe(3);
+    expect(count).toBe(4);
     for (let i = 0; i < count; i++) {
       const id = await inputs.nth(i).getAttribute("id");
       expect(id).toBeTruthy();

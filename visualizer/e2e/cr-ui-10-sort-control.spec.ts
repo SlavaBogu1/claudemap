@@ -98,6 +98,8 @@ test.describe("CR-UI-10 — session sort control", () => {
     await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
     expect(handle.sessionsRequestCount["sudoku"]).toBe(1);
 
+    // CR-UI-23: the header Sort control is only interactive in Hierarchical mode.
+    await page.getByLabel("Layout").selectOption("breadthfirst");
     await page.getByLabel("Sort", { exact: true }).selectOption("agents-desc");
     expect(handle.sessionsRequestCount["sudoku"]).toBe(1);
   });
@@ -135,6 +137,9 @@ test.describe("CR-UI-10 — session sort control", () => {
     await mockApi(page, { projects: [project], sessionsByProjectId: { sudoku: variedSessions() } });
 
     await page.goto("/");
+
+    // CR-UI-23: the header Sort control is only interactive in Hierarchical mode.
+    await page.getByLabel("Layout").selectOption("breadthfirst");
 
     // Header -> Preferences.
     await page.getByLabel("Sort", { exact: true }).selectOption("agents-desc");

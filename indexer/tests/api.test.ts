@@ -83,7 +83,14 @@ describe("HTTP API (CR-API-01)", () => {
     );
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
-      subagents: [{ agentId: "sub1", agentType: "general-purpose", description: "Refactor helper" }],
+      subagents: [
+        {
+          agentId: "sub1",
+          agentType: "general-purpose",
+          description: "Refactor helper",
+          filePath: fixture.subagentSub1TranscriptPath
+        }
+      ],
       memoryTouches: [{ filePath: fixture.memoryTopic1Path, name: "Auth Notes" }],
       overflows: [
         {

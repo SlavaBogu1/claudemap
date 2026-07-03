@@ -14,6 +14,7 @@ import path from "node:path";
  *                                 has a tool-result overflow reference
  *     session-bbb/
  *       subagents/agent-sub1.meta.json
+ *       subagents/agent-sub1.jsonl   — subagent's own transcript (IX-5.1: real data always has both)
  *       tool-results/tooluse-overflow-1.txt
  *     session-ccc.jsonl        — one deliberately malformed line mixed with valid lines
  *     memory/
@@ -30,6 +31,9 @@ export interface Fixture {
   sessionBbbPath: string;
   sessionCccPath: string;
   memoryTopic1Path: string;
+  subagentSub1MetaPath: string;
+  subagentSub1TranscriptPath: string;
+  overflowFilePath: string;
 }
 
 export function buildFixture(): Fixture {
@@ -168,8 +172,9 @@ export function buildFixture(): Fixture {
     })
   ]);
 
+  const subagentSub1MetaPath = path.join(subagentsDir, "agent-sub1.meta.json");
   fs.writeFileSync(
-    path.join(subagentsDir, "agent-sub1.meta.json"),
+    subagentSub1MetaPath,
     JSON.stringify({
       agentType: "general-purpose",
       description: "Refactor helper",
@@ -177,6 +182,35 @@ export function buildFixture(): Fixture {
       agentId: "sub1"
     })
   );
+
+  // Real subagent data always ships a sibling transcript alongside the .meta.json (IX-5.1,
+  // confirmed against production Sudoku/Terraza projects) — same shape as a top-level session,
+  // with isSidechain/agentId, parseable by the same sessionContent.ts parser.
+  const subagentSub1TranscriptPath = path.join(subagentsDir, "agent-sub1.jsonl");
+  writeLines(subagentSub1TranscriptPath, [
+    line({
+      type: "user",
+      uuid: "sub1-u1",
+      parentUuid: null,
+      isSidechain: true,
+      agentId: "sub1",
+      sessionId: "session-bbb",
+      cwd: realProjectPath,
+      timestamp: "2026-06-02T09:01:30.000Z",
+      message: { role: "user", content: "You are a helper agent. Refactor the auth module." }
+    }),
+    line({
+      type: "assistant",
+      uuid: "sub1-a1",
+      parentUuid: "sub1-u1",
+      isSidechain: true,
+      agentId: "sub1",
+      sessionId: "session-bbb",
+      cwd: realProjectPath,
+      timestamp: "2026-06-02T09:01:45.000Z",
+      message: { role: "assistant", content: [{ type: "text", text: "Done — auth module refactored." }] }
+    })
+  ]);
 
   // --- session ccc: one malformed line mixed with valid lines --------------------------------
   const sessionCccPath = path.join(projectDirPath, "session-ccc.jsonl");
@@ -242,7 +276,10 @@ export function buildFixture(): Fixture {
     sessionAaaPath,
     sessionBbbPath,
     sessionCccPath,
-    memoryTopic1Path
+    memoryTopic1Path,
+    subagentSub1MetaPath,
+    subagentSub1TranscriptPath,
+    overflowFilePath
   };
 }
 

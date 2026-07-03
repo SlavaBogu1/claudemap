@@ -21,6 +21,11 @@ export interface MockSession {
   // CR-UI-07 (Sprint 3): documented Indexer v1.4 additions, backing the session banner row.
   memoryTouchCount: number;
   toolResultCount: number;
+  // CR-UI-28 (Sprint 5): documented Indexer v1.8 addition. Optional here (unlike the real
+  // contract's always-present field) so existing inline mock literals across the e2e suite don't
+  // all need updating — an omitted value serializes as `undefined`, which the app's badge check
+  // treats the same as `false`.
+  hasNotedDescendant?: boolean;
 }
 
 export function makeProject(overrides: Partial<MockProject> = {}): MockProject {
@@ -45,13 +50,15 @@ export function makeSessions(count: number): MockSession[] {
     touchedMemory: i % 2 === 0,
     memoryTouchCount: i % 2 === 0 ? i % 4 : 0,
     toolResultCount: i % 5,
+    hasNotedDescendant: false,
   }));
 }
 
 // CR-UI-06 (Sprint 2): mock shape for the documented Indexer v1.3 addition
 // (GET /api/projects/:id/sessions/:sessionId/detail) — never a live Indexer in tests.
+// CR-UI-15 (Sprint 5): subagents gained `filePath` ("Agent Path", Indexer v1.6).
 export interface MockSessionDetail {
-  subagents: { agentId: string; agentType: string; description: string }[];
+  subagents: { agentId: string; agentType: string; description: string; filePath?: string }[];
   memoryTouches: { filePath: string; name: string }[];
   overflows: { toolUseId: string; filePath: string }[];
 }
@@ -89,6 +96,13 @@ export interface MockApiOptions {
   sessionContentByKey?: Record<string, MockSessionContent>;
   // Keyed by "<projectId>/<filePath>". Paths with no entry get an empty-content response.
   memoryContentByKey?: Record<string, string>;
+  // CR-UI-15 (Sprint 5): keyed by "<projectId>/<filePath>". Paths with no entry get an
+  // empty-messages / empty-content response, mirroring memoryContentByKey/sessionContentByKey.
+  agentContentByKey?: Record<string, MockSessionContent>;
+  toolContentByKey?: Record<string, string>;
+  // CR-UI-25 (Sprint 5): keyed by "<projectId>". Projects with no entry get `{source: "none",
+  // content: null}`.
+  projectContentByKey?: Record<string, { source: string; content: string | null }>;
   // Seed notes already "saved" before the test interacts with the app.
   initialNotes?: MockNoteEntry[];
 }
@@ -179,6 +193,38 @@ export async function mockApi(page: Page, options: MockApiOptions): Promise<Mock
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ content }) });
   });
 
+  // CR-UI-15 (Sprint 5) additions below — Agent/Tool content endpoints, identical mock treatment
+  // to memory-content above.
+
+  await page.route(`${API_BASE}/api/projects/*/agent-content*`, (route: Route) => {
+    const url = new URL(route.request().url());
+    const match = url.pathname.match(/\/api\/projects\/([^/]+)\/agent-content/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const path = url.searchParams.get("path") ?? "";
+    const key = `${projectId}/${path}`;
+    const content = options.agentContentByKey?.[key] ?? { messages: [] };
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(content) });
+  });
+
+  await page.route(`${API_BASE}/api/projects/*/tool-content*`, (route: Route) => {
+    const url = new URL(route.request().url());
+    const match = url.pathname.match(/\/api\/projects\/([^/]+)\/tool-content/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const path = url.searchParams.get("path") ?? "";
+    const key = `${projectId}/${path}`;
+    const content = options.toolContentByKey?.[key] ?? "";
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ content }) });
+  });
+
+  // CR-UI-25 (Sprint 5): project-level content endpoint.
+  await page.route(`${API_BASE}/api/projects/*/content`, (route: Route) => {
+    const url = route.request().url();
+    const match = url.match(/\/api\/projects\/([^/]+)\/content/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const content = options.projectContentByKey?.[projectId] ?? { source: "none", content: null };
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(content) });
+  });
+
   await page.route(`${API_BASE}/api/projects/*/notes`, (route: Route) => {
     if (route.request().method() !== "GET") return route.continue();
     const url = route.request().url();
@@ -256,6 +302,32 @@ export async function clickGraphNode(page: Page, nodeId: string): Promise<void> 
     return node.renderedPosition();
   }, nodeId);
   await page.mouse.click(box.x + pos.x, box.y + pos.y);
+}
+
+// CR-UI-09 (reopen, Sprint 4): drags a graph node by a rendered-pixel delta via real mouse events
+// (Cytoscape's own drag handling listens on the canvas's native DOM events, so a locator `.dragTo`
+// won't work here — same reasoning as `clickGraphNode` above needing a simulated click at the
+// node's real rendered position rather than a per-node DOM element).
+export async function dragGraphNode(
+  page: Page,
+  nodeId: string,
+  deltaX: number,
+  deltaY: number,
+): Promise<void> {
+  const canvasWrapper = page.locator(".graph-canvas-wrapper");
+  const box = await canvasWrapper.boundingBox();
+  if (!box) throw new Error("graph canvas wrapper not found");
+  const pos = await page.evaluate((id) => {
+    const cy = (window as unknown as { __cy: import("cytoscape").Core }).__cy;
+    const node = cy.getElementById(id);
+    return node.renderedPosition();
+  }, nodeId);
+  const startX = box.x + pos.x;
+  const startY = box.y + pos.y;
+  await page.mouse.move(startX, startY);
+  await page.mouse.down();
+  await page.mouse.move(startX + deltaX, startY + deltaY, { steps: 10 });
+  await page.mouse.up();
 }
 
 // CR-UI-07: unlike graph nodes, session banners are real HTML buttons (an overlay, not Cytoscape

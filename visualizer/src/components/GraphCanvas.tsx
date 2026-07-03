@@ -13,6 +13,7 @@ import {
   type SortName,
 } from "../types";
 import { fetchSessionDetail } from "../api/client";
+import type { ThemeName } from "../lib/preferences";
 
 // CR-UI-05 (Sprint 2): virtual coordinate space for the "timeline" preset layout. Cytoscape's
 // preset layout fits these into the real viewport (fit: true), so the absolute numbers here only
@@ -24,6 +25,14 @@ const TIMELINE_CHILD_Y_OFFSET = 140; // CR-UI-06 child nodes rendered below thei
 // CR-UI-09: radial-cluster sizing for a session's drill-down children under the timeline preset.
 const CHILD_CLUSTER_MIN_RADIUS = 60; // px — keeps 1-2 children clearly separated at any count
 const CHILD_CLUSTER_NODE_SPACING = 70; // px — generous vs. the ~56px child node diameter
+// CR-UI-16 (Sprint 4): per-type row layout, built on top of CR-UI-09's fix — replaces the single
+// mixed radial cluster with three separate rows (Memory, then Subagent, then Tool, top-to-bottom).
+const CHILD_ROW_Y_SPACING = 90; // px — vertical gap between successive *present* rows
+const CHILD_ROW_NODE_SPACING = 70; // px — horizontal spacing between siblings within a row (mirrors
+// CHILD_CLUSTER_NODE_SPACING's generous margin vs. the ~56px child node diameter)
+// CR-UI-18 (Sprint 4): small inward nudge so a note badge visually sits ON a node's bottom-right
+// corner rather than floating fully outside its shape.
+const NOTE_BADGE_INWARD_OFFSET = 5;
 
 function formatSessionLabel(startedAt: string): string {
   const d = new Date(startedAt);
@@ -64,6 +73,36 @@ export function computeChildClusterPositions(
       y: centerY + radius * Math.sin(angle),
     };
   });
+  return positions;
+}
+
+// CR-UI-16 (Sprint 4, built on CR-UI-09's fix): given a parent session's (live) position and its
+// drill-down children pre-grouped into rows — one entry per drill-down type, in the fixed
+// Memory/Subagent/Tool top-to-bottom order, each entry's `ids` already that type's full sibling
+// list — returns one point per child, laid out as evenly-spaced rows below the parent instead of
+// CR-UI-09's single mixed radial cluster. A `ids: []` entry (that type has zero items for this
+// session) contributes no row and is skipped entirely — the next non-empty type's row lands
+// immediately after the previous one, so rows never leave a gap for an absent type. Within a row,
+// siblings are spaced evenly along X, centered under the parent, with a fixed inter-sibling spacing
+// (mirrors `computeChildClusterPositions`' "fixed arc-length spacing keeps points from ever
+// overlapping regardless of count" principle, adapted from a circle's circumference to a
+// straight line's length: `totalWidth = (n - 1) * spacing` grows with the row's count rather than
+// the spacing itself shrinking). Deterministic — same input always produces the same output.
+export function computeChildRowPositions(
+  parentPos: { x: number; y: number },
+  rows: { ids: string[] }[],
+): Record<string, { x: number; y: number }> {
+  const positions: Record<string, { x: number; y: number }> = {};
+  let rowIndex = 0;
+  for (const { ids } of rows) {
+    if (ids.length === 0) continue;
+    const y = parentPos.y + TIMELINE_CHILD_Y_OFFSET + rowIndex * CHILD_ROW_Y_SPACING;
+    const totalWidth = (ids.length - 1) * CHILD_ROW_NODE_SPACING;
+    ids.forEach((id, i) => {
+      positions[id] = { x: parentPos.x - totalWidth / 2 + i * CHILD_ROW_NODE_SPACING, y };
+    });
+    rowIndex++;
+  }
   return positions;
 }
 
@@ -137,35 +176,61 @@ function layoutOptionsFor(
     // in Cytoscape at that moment — grouping per parent to avoid O(n^2) rework across many children.
     let childClusterCache: Record<string, { x: number; y: number }> | null = null;
 
+    // CR-UI-09 (reopen, Sprint 4): resolves a session/project node's position for cluster-building
+    // purposes from its actual *current* position in the graph — which reflects any drag that
+    // happened since the last relayout — rather than `computeTimelinePositions`' output, which is
+    // computed purely from `startedAt` and knows nothing about drags. Falls back to the computed
+    // timeline position only when the node isn't resolvable in Cytoscape yet (the node itself is
+    // being positioned for the first time on a full relayout — see the `positions[id]` branch
+    // below, which is the path that actually establishes a session/project node's own position).
+    function resolveParentPos(cy: Core, parentId: string): { x: number; y: number } | undefined {
+      const parentNode = cy.getElementById(parentId);
+      if (parentNode.length > 0) return parentNode.position();
+      return positions[parentId];
+    }
+
     return {
       name: "preset",
       fit: true,
       padding: 30,
       animate: false,
       // Session/project nodes use their computed timeline position. CR-UI-06 drill-down child
-      // nodes (subagent/memory/tool, CR-UI-14) aren't sessions, so they're arranged in a radial
-      // cluster below their parent session — returning undefined for anything else leaves it at
-      // its current position.
+      // nodes (subagent/memory/tool, CR-UI-14) aren't sessions, so they're arranged below their
+      // parent session — CR-UI-16: one row per present type (Memory, Subagent, Tool) rather than
+      // CR-UI-09's single mixed radial cluster — returning undefined for anything else leaves it
+      // at its current position.
       positions: (node: NodeSingular) => {
         const id = node.id();
         if (positions[id]) return positions[id];
         const parentId = node.data("parentSessionId") as string | undefined;
-        const parentPos = parentId ? positions[parentId] : undefined;
+        if (!parentId) return undefined;
+        const parentPos = resolveParentPos(node.cy(), parentId);
         if (!parentPos) return undefined;
 
         if (!childClusterCache) {
           childClusterCache = {};
-          const byParent = new Map<string, string[]>();
+          // CR-UI-16: grouped per parent AND per type (fixed Memory/Subagent/Tool row order) —
+          // still built once per layout run, grouping the full sibling set present in Cytoscape at
+          // that moment, same as CR-UI-09's original per-parent-only grouping.
+          const byParent = new Map<string, { memory: string[]; subagent: string[]; tool: string[] }>();
           node.cy().nodes('[parentSessionId]').forEach((childNode: NodeSingular) => {
             const pId = childNode.data("parentSessionId") as string;
-            const list = byParent.get(pId) ?? [];
-            list.push(childNode.id());
-            byParent.set(pId, list);
+            const type = childNode.data("type") as "memory" | "subagent" | "tool";
+            const groups = byParent.get(pId) ?? { memory: [], subagent: [], tool: [] };
+            groups[type].push(childNode.id());
+            byParent.set(pId, groups);
           });
-          for (const [pId, childIds] of byParent) {
-            const pPos = positions[pId];
+          for (const [pId, groups] of byParent) {
+            const pPos = resolveParentPos(node.cy(), pId);
             if (!pPos) continue;
-            Object.assign(childClusterCache, computeChildClusterPositions(pPos, childIds));
+            Object.assign(
+              childClusterCache,
+              computeChildRowPositions(pPos, [
+                { ids: groups.memory },
+                { ids: groups.subagent },
+                { ids: groups.tool },
+              ]),
+            );
           }
         }
         return childClusterCache[id];
@@ -183,92 +248,149 @@ function layoutOptionsFor(
   } as LayoutOptions;
 }
 
-const stylesheet: cytoscape.StylesheetJson = [
-  {
-    selector: "node",
-    style: {
-      label: "data(label)",
-      "text-wrap": "wrap",
-      "text-valign": "center",
-      "text-halign": "center",
-      "font-size": 11,
-      color: "#08060d",
-      "background-color": "#e5e4e7",
-      "border-width": 1,
-      "border-color": "#6b6375",
-      width: 70,
-      height: 70,
+// CR-UI-24 (Sprint 5): Cytoscape renders to a JS-driven <canvas>, not real DOM — its stylesheet is
+// a plain JS object that never picks up CSS variables or the `prefers-color-scheme` media query
+// `index.css` uses for the rest of the app's chrome. So the canvas needs its own light/dark
+// palette, mirroring `index.css`'s two palettes conceptually (node fill/border, edge line, plus the
+// selection outline color) — selected in `GraphCanvas` below based on the resolved theme, and the
+// whole stylesheet rebuilt/reapplied (react-cytoscapejs diffs+patches the `stylesheet` prop, see
+// `node_modules/react-cytoscapejs/src/patch.js`) whenever that resolved theme changes.
+interface CanvasPalette {
+  defaultBg: string;
+  defaultText: string;
+  defaultBorder: string;
+  projectBg: string;
+  projectText: string;
+  subagentBg: string;
+  subagentText: string;
+  memoryBg: string;
+  memoryText: string;
+  toolBg: string;
+  toolText: string;
+  selectedBorder: string;
+  edgeLine: string;
+}
+
+const LIGHT_PALETTE: CanvasPalette = {
+  defaultBg: "#e5e4e7",
+  defaultText: "#08060d",
+  defaultBorder: "#6b6375",
+  projectBg: "#aa3bff",
+  projectText: "#fff",
+  subagentBg: "#3b6bff",
+  subagentText: "#fff",
+  memoryBg: "#f2c14e",
+  memoryText: "#08060d",
+  toolBg: "#9a97a1",
+  toolText: "#08060d",
+  selectedBorder: "#aa3bff",
+  edgeLine: "#c9c7cf",
+};
+
+const DARK_PALETTE: CanvasPalette = {
+  defaultBg: "#3a3d47",
+  defaultText: "#f3f4f6",
+  defaultBorder: "#6b7280",
+  projectBg: "#c084fc",
+  projectText: "#16171d",
+  subagentBg: "#6d8dff",
+  subagentText: "#16171d",
+  memoryBg: "#f2c14e",
+  memoryText: "#16171d",
+  toolBg: "#9a97a1",
+  toolText: "#16171d",
+  selectedBorder: "#c084fc",
+  edgeLine: "#565a68",
+};
+
+function buildStylesheet(palette: CanvasPalette): cytoscape.StylesheetJson {
+  return [
+    {
+      selector: "node",
+      style: {
+        label: "data(label)",
+        "text-wrap": "wrap",
+        "text-valign": "center",
+        "text-halign": "center",
+        "font-size": 11,
+        color: palette.defaultText,
+        "background-color": palette.defaultBg,
+        "border-width": 1,
+        "border-color": palette.defaultBorder,
+        width: 70,
+        height: 70,
+      },
     },
-  },
-  {
-    selector: 'node[type = "project"]',
-    style: {
-      "background-color": "#aa3bff",
-      color: "#fff",
-      width: 90,
-      height: 90,
-      "font-weight": "bold",
+    {
+      selector: 'node[type = "project"]',
+      style: {
+        "background-color": palette.projectBg,
+        color: palette.projectText,
+        width: 90,
+        height: 90,
+        "font-weight": "bold",
+      },
     },
-  },
-  {
-    selector: 'node[type = "session"]',
-    style: {
-      shape: "round-rectangle",
+    {
+      selector: 'node[type = "session"]',
+      style: {
+        shape: "round-rectangle",
+      },
     },
-  },
-  // CR-UI-06 (Sprint 2, D6-gated): drill-down child node types, each visually distinct (shape +
-  // color) from session nodes (rounded rect) and the project node (default ellipse) and from
-  // each other, per the approved mockup legend (visualizer/requirements/SPRINT_TASKS.md).
-  {
-    selector: 'node[type = "subagent"]',
-    style: {
-      shape: "diamond",
-      "background-color": "#3b6bff",
-      color: "#fff",
-      width: 56,
-      height: 56,
+    // CR-UI-06 (Sprint 2, D6-gated): drill-down child node types, each visually distinct (shape +
+    // color) from session nodes (rounded rect) and the project node (default ellipse) and from
+    // each other, per the approved mockup legend (visualizer/requirements/SPRINT_TASKS.md).
+    {
+      selector: 'node[type = "subagent"]',
+      style: {
+        shape: "diamond",
+        "background-color": palette.subagentBg,
+        color: palette.subagentText,
+        width: 56,
+        height: 56,
+      },
     },
-  },
-  {
-    selector: 'node[type = "memory"]',
-    style: {
-      shape: "star",
-      "background-color": "#f2c14e",
-      color: "#08060d",
-      width: 56,
-      height: 56,
+    {
+      selector: 'node[type = "memory"]',
+      style: {
+        shape: "star",
+        "background-color": palette.memoryBg,
+        color: palette.memoryText,
+        width: 56,
+        height: 56,
+      },
     },
-  },
-  {
-    // CR-UI-14 (Sprint 3): renamed from "overflow" — same data/shape/color, new type identifier
-    // and user-facing label/icon (⚙ Tool, in the label text — Cytoscape's built-in shapes don't
-    // include a literal gear, consistent with how ★/◆ are emoji-prefixed in their labels).
-    selector: 'node[type = "tool"]',
-    style: {
-      shape: "rectangle",
-      "background-color": "#9a97a1",
-      color: "#08060d",
-      width: 56,
-      height: 56,
+    {
+      // CR-UI-14 (Sprint 3): renamed from "overflow" — same data/shape/color, new type identifier
+      // and user-facing label/icon (⚙ Tool, in the label text — Cytoscape's built-in shapes don't
+      // include a literal gear, consistent with how ★/◆ are emoji-prefixed in their labels).
+      selector: 'node[type = "tool"]',
+      style: {
+        shape: "rectangle",
+        "background-color": palette.toolBg,
+        color: palette.toolText,
+        width: 56,
+        height: 56,
+      },
     },
-  },
-  {
-    selector: "node.selected",
-    style: {
-      "border-width": 3,
-      "border-color": "#aa3bff",
+    {
+      selector: "node.selected",
+      style: {
+        "border-width": 3,
+        "border-color": palette.selectedBorder,
+      },
     },
-  },
-  {
-    selector: "edge",
-    style: {
-      width: 1.5,
-      "line-color": "#c9c7cf",
-      "curve-style": "bezier",
-      "target-arrow-shape": "none",
+    {
+      selector: "edge",
+      style: {
+        width: 1.5,
+        "line-color": palette.edgeLine,
+        "curve-style": "bezier",
+        "target-arrow-shape": "none",
+      },
     },
-  },
-];
+  ];
+}
 
 export interface GraphCanvasProps {
   project: Project;
@@ -288,6 +410,9 @@ export interface GraphCanvasProps {
   // CR-UI-08: `${nodeType}:${rawId}` keys of every item with a saved note — drives the 📝 label
   // suffix on graph nodes. Built once per project in App.tsx from `GET .../notes`.
   notedKeys?: Set<string>;
+  // CR-UI-24: the user's Light/Dark/System theme preference — resolved to an actual light/dark
+  // palette for the Cytoscape stylesheet below ("system" follows the OS preference).
+  theme: ThemeName;
 }
 
 // CR-UI-10: pure sort step, pulled out for unit testing. A plain `.slice().sort(...)` — no
@@ -312,14 +437,10 @@ export function sortSessions(sessions: Session[], sort: SortName): Session[] {
   return sorted;
 }
 
-// CR-UI-08 (Sprint 3): small 📝 suffix appended to a node's label when it has a saved note —
-// `notedKeys` is a `Set` of `${nodeType}:${rawId}` strings (the API's note-key vocabulary), built
-// once in App.tsx from `GET .../notes` and passed down; a quick visual cue independent of whether
-// the Content tab is open. Appended to the label text (not a separate shape/overlay), consistent
-// with how ★/◆/⚙ are already emoji-prefixed in-label rather than custom node shapes.
-function noteSuffix(notedKeys: Set<string> | undefined, nodeType: NodeType, rawId: string): string {
-  return notedKeys?.has(`${nodeType}:${rawId}`) ? " 📝" : "";
-}
+// CR-UI-18 (Sprint 4): the 📝 note indicator moved from an in-label suffix to the `.note-badge-layer`
+// corner-badge overlay (see the component below) — `buildGraphElements`/`buildChildElements` below
+// no longer take a `notedKeys` param or touch label text for notes at all; `GraphCanvasProps.notedKeys`
+// now feeds only the badge overlay's own positioning logic.
 
 // Pure element-builder pulled out of the component so extremes (1 vs 20+ sessions, VZ-1.5) can be
 // unit-tested without mounting Cytoscape (which needs a real canvas, unavailable under jsdom).
@@ -327,13 +448,12 @@ export function buildGraphElements(
   project: Project,
   sessions: Session[],
   sort: SortName = DEFAULT_SORT,
-  notedKeys?: Set<string>,
 ): ElementDefinition[] {
   const sortedSessions = sortSessions(sessions, sort);
   const projectNode: ElementDefinition = {
     data: {
       id: `project:${project.id}`,
-      label: `🎯 ${project.path.split(/[/\\]/).pop() ?? project.id}${noteSuffix(notedKeys, "project", project.id)}`,
+      label: `🎯 ${project.path.split(/[/\\]/).pop() ?? project.id}`,
       type: "project",
       rawId: project.id,
     },
@@ -341,7 +461,7 @@ export function buildGraphElements(
   const sessionNodes: ElementDefinition[] = sortedSessions.map((s) => ({
     data: {
       id: s.id,
-      label: `${formatSessionLabel(s.startedAt)}${noteSuffix(notedKeys, "session", s.id)}`,
+      label: formatSessionLabel(s.startedAt),
       type: "session",
       rawId: s.id,
     },
@@ -354,10 +474,6 @@ export function buildGraphElements(
     },
   }));
   return [projectNode, ...sessionNodes, ...edges];
-}
-
-function basename(filePath: string): string {
-  return filePath.split(/[/\\]/).pop() ?? filePath;
 }
 
 // CR-UI-07 (Sprint 3): the three drill-down child types, now independently toggleable per banner
@@ -383,18 +499,27 @@ export function toApiNodeType(type: DrillDownType): NodeType {
   return type === "memory" ? "memoryTouch" : type;
 }
 
+// CR-UI-18 (Sprint 4): same "memory" -> "memoryTouch" mapping as `toApiNodeType` above, generalized
+// to every Cytoscape node `type` value (including "project"/"session", which `toApiNodeType`'s
+// `DrillDownType` param can't accept) — used by the note-badge overlay below, which (unlike the old
+// in-label 📝 suffix) checks `notedKeys` membership for ALL node types, not just drill-down children.
+function apiNodeTypeForCyType(cyType: string): NodeType {
+  return cyType === "memory" ? "memoryTouch" : (cyType as NodeType);
+}
+
 export function buildChildElements(
   sessionId: string,
   detail: SessionDetail,
   types?: Set<DrillDownType>,
-  notedKeys?: Set<string>,
 ): ElementDefinition[] {
   const elements: ElementDefinition[] = [];
   const include = (t: DrillDownType) => !types || types.has(t);
 
-  function addChild(id: string, label: string, type: DrillDownType, rawId: string) {
-    const suffix = noteSuffix(notedKeys, toApiNodeType(type), rawId);
-    elements.push({ data: { id, label: `${label}${suffix}`, type, parentSessionId: sessionId, rawId } });
+  // CR-UI-15 (Sprint 5): `filePath` carries the real on-disk path backing subagent/tool items
+  // ("Agent Path"/"Tool Path") — distinct from `rawId` (the notes/content API's `nodeId`) for these
+  // two types. Omitted for memory (its `rawId` already *is* the file path).
+  function addChild(id: string, label: string, type: DrillDownType, rawId: string, filePath?: string) {
+    elements.push({ data: { id, label, type, parentSessionId: sessionId, rawId, filePath } });
     elements.push({
       data: { id: `edge:${id}`, source: sessionId, target: id },
     });
@@ -402,25 +527,23 @@ export function buildChildElements(
 
   if (include("subagent")) {
     detail.subagents.forEach((a) => {
-      addChild(`${sessionId}:subagent:${a.agentId}`, `◆ Subagent\n${a.agentType}`, "subagent", a.agentId);
+      addChild(`${sessionId}:subagent:${a.agentId}`, `◆ Agent`, "subagent", a.agentId, a.filePath);
     });
   }
   if (include("memory")) {
+    // CR-UI-22 (Sprint 4): label simplified to the fixed "★ Memory" text — the filename (formerly
+    // `m.name ?? basename(m.filePath)`, with a fallback for the Sprint-2 null-name case, Indexer
+    // LEFT JOIN) no longer appears in-label. `m.name`/`m.filePath` are still real API data on
+    // `SessionDetail` (untouched) and `m.filePath` is still this child's `rawId` — only the label
+    // template dropped them. CR-UI-15's "Memory Path" field reuses `rawId` directly (no separate
+    // `filePath` needed here, unlike subagent/tool).
     detail.memoryTouches.forEach((m) => {
-      // CR-UI-06 fix (Sprint 2 report, Indexer leg): name is null when the touched file isn't
-      // currently indexed in memory_files (LEFT JOIN) — e.g. deleted since the touch, or not yet
-      // re-scanned. Fall back to the file's basename rather than rendering the literal "null".
-      addChild(
-        `${sessionId}:memory:${m.filePath}`,
-        `★ Memory\n${m.name ?? basename(m.filePath)}`,
-        "memory",
-        m.filePath,
-      );
+      addChild(`${sessionId}:memory:${m.filePath}`, `★ Memory`, "memory", m.filePath);
     });
   }
   if (include("tool")) {
     detail.overflows.forEach((o) => {
-      addChild(`${sessionId}:tool:${o.toolUseId}`, `⚙ Tool\n${basename(o.filePath)}`, "tool", o.toolUseId);
+      addChild(`${sessionId}:tool:${o.toolUseId}`, `⚙ Tool log`, "tool", o.toolUseId, o.filePath);
     });
   }
 
@@ -437,9 +560,33 @@ export function GraphCanvas({
   showBanners,
   onSelectItem,
   notedKeys,
+  theme,
 }: GraphCanvasProps) {
   const cyRef = useRef<Core | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
+
+  // CR-UI-24: "system" resolves to the OS's live `prefers-color-scheme` preference — tracked as
+  // state (not read once) so the canvas keeps following the OS setting exactly like `index.css`'s
+  // media query does for the rest of the app's chrome, even if the OS preference changes while the
+  // app is open.
+  const [osPrefersDark, setOsPrefersDark] = useState<boolean>(
+    () => typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches,
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mql = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (e: MediaQueryListEvent) => setOsPrefersDark(e.matches);
+    mql.addEventListener("change", handleChange);
+    return () => mql.removeEventListener("change", handleChange);
+  }, []);
+  const resolvedDark = theme === "dark" || (theme === "system" && osPrefersDark);
+  // CR-UI-24: rebuilt (new array reference) whenever the resolved theme changes — react-cytoscapejs
+  // diffs the `stylesheet` prop and reapplies it to the live `cy` instance, since Cytoscape has no
+  // built-in way to pick up a CSS variable change on its own.
+  const stylesheet = useMemo(
+    () => buildStylesheet(resolvedDark ? DARK_PALETTE : LIGHT_PALETTE),
+    [resolvedDark],
+  );
   // Test/observability hook only (not part of the approved mockup, D6): reflects the app-level
   // LayoutName Cytoscape most recently finished running, so Playwright can assert layout switches
   // happened via Cytoscape's own state rather than a pixel diff (VZ-1.6 acceptance 2). Tracked via a
@@ -483,9 +630,60 @@ export function GraphCanvas({
     setBannerPositions(next);
   }
 
+  // CR-UI-18 (Sprint 4): on-screen position for the 📝 note-badge overlay — same real-HTML-overlay
+  // reasoning as `bannerPositions` above, but generalized over EVERY node type with a saved note
+  // (project/session/subagent/memory/tool), not just sessions. Recomputed on the same events as the
+  // banner layer (see the `cy` callback below) via the shared `recomputeOverlays` helper.
+  const [noteBadgePositions, setNoteBadgePositions] = useState<Map<string, { x: number; y: number }>>(
+    new Map(),
+  );
+
+  // CR-UI-28 (Sprint 5): sessions whose `hasNotedDescendant` (Indexer v1.8) is true — the session
+  // itself or any of its subagent/memory-touch/tool sub-items has a saved note, computed
+  // server-side so this works even for a session that has never been drilled down into (its
+  // sub-items don't exist as real Cytoscape elements yet — see CR-UI-06's lazy-fetch design).
+  const sessionsWithNotedDescendant = useMemo(
+    () => new Set(sessions.filter((s) => s.hasNotedDescendant).map((s) => s.id)),
+    [sessions],
+  );
+
+  function recomputeNoteBadgePositions(cy: Core) {
+    const next = new Map<string, { x: number; y: number }>();
+    const hasDirectNotes = notedKeys && notedKeys.size > 0;
+    if (hasDirectNotes || sessionsWithNotedDescendant.size > 0) {
+      cy.nodes().forEach((node: NodeSingular) => {
+        const apiType = apiNodeTypeForCyType(node.data("type") as string);
+        const rawId = node.data("rawId") as string;
+        const hasDirectNote = !!notedKeys && notedKeys.has(`${apiType}:${rawId}`);
+        // CR-UI-28: a session node also shows the badge when `hasNotedDescendant` is true — in
+        // addition to (not instead of) the existing direct-note check above.
+        const hasNotedDescendant = apiType === "session" && sessionsWithNotedDescendant.has(rawId);
+        if (!hasDirectNote && !hasNotedDescendant) return;
+        const pos = node.renderedPosition();
+        const halfWidth = node.renderedOuterWidth() / 2;
+        const halfHeight = node.renderedOuterHeight() / 2;
+        // Bottom-right corner of the node's rendered box, nudged inward so the badge visually sits
+        // on the corner instead of floating fully outside the shape.
+        next.set(node.id(), {
+          x: pos.x + halfWidth - NOTE_BADGE_INWARD_OFFSET,
+          y: pos.y + halfHeight - NOTE_BADGE_INWARD_OFFSET,
+        });
+      });
+    }
+    setNoteBadgePositions(next);
+  }
+
+  // CR-UI-18: recomputes both overlays together — reuses the banner layer's existing event wiring
+  // (pan/zoom/position/layoutstop, see the `cy` callback below) rather than registering a second,
+  // duplicate set of listeners just for badges.
+  function recomputeOverlays(cy: Core) {
+    recomputeBannerPositions(cy);
+    recomputeNoteBadgePositions(cy);
+  }
+
   const baseElements: ElementDefinition[] = useMemo(
-    () => buildGraphElements(project, sessions, sort, notedKeys),
-    [project, sessions, sort, notedKeys],
+    () => buildGraphElements(project, sessions, sort),
+    [project, sessions, sort],
   );
 
   const elements: ElementDefinition[] = useMemo(() => {
@@ -493,11 +691,11 @@ export function GraphCanvas({
     for (const [sessionId, types] of expandedTypes) {
       const detail = sessionDetails.get(sessionId);
       if (detail && types.size > 0) {
-        children.push(...buildChildElements(sessionId, detail, types, notedKeys));
+        children.push(...buildChildElements(sessionId, detail, types));
       }
     }
     return [...baseElements, ...children];
-  }, [baseElements, expandedTypes, sessionDetails, notedKeys]);
+  }, [baseElements, expandedTypes, sessionDetails]);
 
   // CR-UI-13: memoized so its identity (and, for "timeline", its `positions` callback's identity)
   // only changes when the algorithm/project/sessions/sort actually change — not on every render
@@ -607,7 +805,7 @@ export function GraphCanvas({
     const observer = new ResizeObserver(() => {
       const cy = cyRef.current;
       cy?.resize();
-      if (cy) recomputeBannerPositions(cy);
+      if (cy) recomputeOverlays(cy);
     });
     observer.observe(wrapper);
     return () => observer.disconnect();
@@ -622,6 +820,21 @@ export function GraphCanvas({
       cy.getElementById(selectedSessionId).addClass("selected");
     }
   }, [selectedSessionId, elements]);
+
+  // CR-UI-18: `notedKeys` changing (e.g. the Content tab's Save/Delete, applied optimistically in
+  // App.tsx) isn't itself a Cytoscape layout/viewport event — nothing in the `cy` callback's
+  // pan/zoom/position/layoutstop wiring above would otherwise fire to pick up the new set, so a
+  // freshly-saved/-deleted note's badge wouldn't appear/disappear until the next unrelated
+  // layout/pan/zoom. Also re-runs when `elements` changes (e.g. expanding a session whose child
+  // already has a saved note) so that child's badge appears without an extra event.
+  // CR-UI-28: also re-runs when `sessionsWithNotedDescendant` changes — App.tsx re-fetches the
+  // sessions list after a note mutation, so a note added/removed on a (possibly never-expanded)
+  // sub-item updates its parent session's badge without a full page reload.
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    recomputeNoteBadgePositions(cy);
+  }, [notedKeys, elements, sessionsWithNotedDescendant]);
 
   // CR-UI-07: toggle ONE drill-down type for a session, independently of the other two (replaces
   // CR-UI-06's all-or-nothing `toggleSessionExpansion` — each banner now expands only its own
@@ -671,6 +884,41 @@ export function GraphCanvas({
     });
   }
 
+  // CR-UI-07 (reopen, Sprint 4): restores the session-body-click expand-all/collapse-all toggle
+  // (CR-UI-06's original all-or-nothing gesture, removed by CR-UI-07's per-banner-only change) as an
+  // ADDITION alongside the still-independent per-banner single-type toggles above — not a
+  // replacement. Body click: expand all 3 types if any are currently missing (regardless of whether
+  // the present ones got there via the body or their own banner), or collapse to empty only when all
+  // 3 are already present. Unlike `toggleBannerType`, this doesn't skip a zero-count type — it still
+  // adds it to the expanded set for consistency with "all 3", but `buildChildElements`/the `elements`
+  // memo above render nothing extra for it either way (an empty array `.forEach` is a no-op).
+  const ALL_DRILLDOWN_TYPES: DrillDownType[] = ["subagent", "memory", "tool"];
+  async function toggleAllTypesForSession(sessionId: string) {
+    const current = expandedTypes.get(sessionId);
+    const allExpanded = ALL_DRILLDOWN_TYPES.every((t) => current?.has(t));
+    if (allExpanded) {
+      setExpandedTypes((prev) => {
+        const next = new Map(prev);
+        next.delete(sessionId);
+        return next;
+      });
+      return;
+    }
+
+    if (!sessionDetails.has(sessionId)) {
+      try {
+        const detail = await fetchSessionDetail(project.id, sessionId);
+        setSessionDetails((prev) => new Map(prev).set(sessionId, detail));
+      } catch {
+        // Same best-effort affordance as `toggleBannerType`: a failed detail fetch simply leaves
+        // expansion as-is rather than surfacing a separate error channel.
+        return;
+      }
+    }
+
+    setExpandedTypes((prev) => new Map(prev).set(sessionId, new Set(ALL_DRILLDOWN_TYPES)));
+  }
+
   return (
     <div className="graph-canvas-wrapper" ref={wrapperRef}>
       <CytoscapeComponent
@@ -688,19 +936,36 @@ export function GraphCanvas({
           cy.on("tap", "node", (evt) => {
             const node = evt.target;
             const type = node.data("type") as string;
-            // CR-UI-07: clicking the session node body only selects it for the detail panel —
-            // it no longer expands children (a confirmed behavior change from CR-UI-06; expansion
-            // is now exclusively a per-banner action, see the `session-banner` buttons below).
+            // CR-UI-07 (reopen, Sprint 4): clicking the session node body selects it for the detail
+            // panel (unchanged) AND toggles expand-all/collapse-all across all 3 drill-down types
+            // (restored — Sprint 3 had made body-click selection-only, expansion exclusively a
+            // per-banner action; those per-banner toggles remain independent and unchanged below).
             if (type === "session") {
               onSelectSession(node.id());
-              onSelectItem({ nodeType: "session", rawId: node.id(), label: node.data("label") });
+              // CR-UI-04: `sessionId` is the item's own id for a session selection — drives the
+              // Detail panel's Info-tab Resume command field (reopen, Sprint 5: no longer a separate
+              // Terminal tab).
+              onSelectItem({
+                nodeType: "session",
+                rawId: node.id(),
+                label: node.data("label"),
+                sessionId: node.id(),
+              });
+              void toggleAllTypesForSession(node.id());
             } else if (type === "subagent" || type === "memory" || type === "tool") {
               // CR-UI-08: drill-down child nodes are now selectable too (previously inert), driving
               // the Detail panel's Content tab for whichever item type is clicked.
+              // CR-UI-04: `sessionId` here is the child's *parent* session's id (`parentSessionId`)
+              // — there's no per-sub-item resume concept, the Resume command field always resumes
+              // the owning session.
               onSelectItem({
                 nodeType: toApiNodeType(type as DrillDownType),
                 rawId: node.data("rawId"),
                 label: node.data("label"),
+                sessionId: node.data("parentSessionId") as string,
+                // CR-UI-15: "Agent Path"/"Tool Path" data + the Content tab's Agent/Tool fetch —
+                // undefined for memory (its `rawId` above already is the file path).
+                filePath: node.data("filePath") as string | undefined,
               });
             } else if (type === "project") {
               onSelectItem({ nodeType: "project", rawId: node.data("rawId"), label: node.data("label") });
@@ -709,18 +974,21 @@ export function GraphCanvas({
           cy.off("layoutstop");
           cy.on("layoutstop", () => {
             setAppliedLayout(pendingLayoutRef.current);
-            recomputeBannerPositions(cy);
+            recomputeOverlays(cy);
           });
           // CR-UI-07: keep the banner overlay glued to its session node across pans/zooms and
           // direct node drags (which don't trigger a "layoutstop"). NOTE: deliberately event-driven
           // only — this `cy` callback prop itself re-runs on every React re-render (react-cytoscapejs
           // calls it from both componentDidMount and componentDidUpdate), so calling
-          // `recomputeBannerPositions` unconditionally here (rather than from a Cytoscape event) would
+          // `recomputeOverlays` unconditionally here (rather than from a Cytoscape event) would
           // set state on every render and re-trigger itself indefinitely (React error #185).
+          // CR-UI-18: the `position` listener below is scoped to every node (not just sessions) —
+          // the note-badge overlay generalizes over all node types, so any node's drag needs to
+          // re-track its badge; reused here rather than adding a second, duplicate listener.
           cy.off("pan zoom");
-          cy.on("pan zoom", () => recomputeBannerPositions(cy));
-          cy.off("position", 'node[type = "session"]');
-          cy.on("position", 'node[type = "session"]', () => recomputeBannerPositions(cy));
+          cy.on("pan zoom", () => recomputeOverlays(cy));
+          cy.off("position", "node");
+          cy.on("position", "node", () => recomputeOverlays(cy));
         }}
       />
       {showBanners && (
@@ -768,6 +1036,22 @@ export function GraphCanvas({
           })}
         </div>
       )}
+      {/* CR-UI-18 (Sprint 4): bottom-right corner badge overlay for the 📝 note indicator, replacing
+          the old in-label suffix — generalized over every node type with a saved note (not just
+          sessions), unlike the `showBanners`-gated layer above; independent of that preference. */}
+      <div className="note-badge-layer">
+        {[...noteBadgePositions.entries()].map(([nodeId, pos]) => (
+          <span
+            key={nodeId}
+            className="note-badge"
+            data-testid="note-badge"
+            data-node-id={nodeId}
+            style={{ left: pos.x, top: pos.y }}
+          >
+            📝
+          </span>
+        ))}
+      </div>
       {/* Visually hidden test hook — not part of the approved mockup (D6). Lets Playwright assert
           node count and the currently-applied Cytoscape layout without pixel diffing or reaching
           into canvas internals. */}

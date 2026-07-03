@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { LayoutName, SortName } from "../types";
+import type { ThemeName } from "../lib/preferences";
 import { PreferencesPanel } from "./PreferencesPanel";
 import { AboutPanel } from "./AboutPanel";
 import { DocumentationPanel } from "./DocumentationPanel";
@@ -13,6 +14,9 @@ export interface BurgerMenuProps {
   onPreferredSortChange: (sort: SortName) => void;
   showBanners: boolean;
   onShowBannersChange: (show: boolean) => void;
+  // CR-UI-24: Light/Dark/System theme preference.
+  theme: ThemeName;
+  onThemeChange: (theme: ThemeName) => void;
 }
 
 export function BurgerMenu({
@@ -22,6 +26,8 @@ export function BurgerMenu({
   onPreferredSortChange,
   showBanners,
   onShowBannersChange,
+  theme,
+  onThemeChange,
 }: BurgerMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
@@ -85,6 +91,8 @@ export function BurgerMenu({
           onSortChange={onPreferredSortChange}
           showBanners={showBanners}
           onShowBannersChange={onShowBannersChange}
+          theme={theme}
+          onThemeChange={onThemeChange}
           onClose={() => setActivePanel(null)}
         />
       )}

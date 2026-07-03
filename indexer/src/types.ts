@@ -16,6 +16,8 @@ export interface SessionEntry {
   touchedMemory: boolean;
   memoryTouchCount: number;
   toolResultCount: number;
+  /** (v1.8, CR-UI-28) True if this session or any subagent/memory-touch/tool sub-item has a note. */
+  hasNotedDescendant: boolean;
 }
 
 export interface SubagentRecord {
@@ -24,6 +26,13 @@ export interface SubagentRecord {
   agentType: string | null;
   description: string | null;
   toolUseId: string | null;
+  /**
+   * (v1.6, CR-UI-15) The subagent's own file on disk — its `{session-uuid}/subagents/
+   * agent-{agentId}.jsonl` transcript when one exists (confirmed present for real subagent data,
+   * IX-5.1), else falls back to its `.meta.json` file so this is never null/placeholder for a
+   * subagent that was discovered at all.
+   */
+  filePath: string | null;
 }
 
 export interface ToolResultOverflowRecord {
@@ -44,6 +53,8 @@ export interface SessionDetailSubagent {
   agentId: string;
   agentType: string | null;
   description: string | null;
+  /** (v1.6, CR-UI-15) "Agent Path" — see `SubagentRecord.filePath`. */
+  filePath: string | null;
 }
 
 export interface SessionDetailMemoryTouch {
@@ -82,4 +93,17 @@ export interface SessionContentMessage {
   role: "user" | "assistant";
   text: string;
   timestamp: string | null;
+}
+
+/** (v1.7, CR-UI-25) GET /api/projects/:id/content's fixed source enum. */
+export type ProjectContentSource = "readme" | "claude-md" | "first-message" | "none";
+
+export interface ProjectContent {
+  source: ProjectContentSource;
+  content: string | null;
+}
+
+/** (v1.6, CR-UI-15) GET /api/projects/:id/agent-content's response — same shape as session content. */
+export interface AgentContent {
+  messages: SessionContentMessage[];
 }

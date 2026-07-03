@@ -1,13 +1,15 @@
 # Indexer ↔ Visualizer API Contract
 
-**Owner:** Indexer team. **Version:** v1.5.
+**Owner:** Indexer team. **Version:** v1.8.
 Golden copy — the Visualizer reads this file directly; never copy it into `visualizer/`.
 Change workflow: `REQUIREMENTS/PRODUCT_OWNER_PROCESS.md` § Contract Change Workflow.
 
 ## Status
 Sprint 1 (CR-CORE-01, CR-API-01, CR-CORE-02) implemented, plus hotfix `CR-API-02` (CORS, see below),
-Sprint 2's `CR-UI-06` session detail endpoint, and Sprint 3's `CR-UI-07` (session count fields) and
-`CR-UI-08` (notes + content endpoints, see below). All endpoints below are backed by an Express app
+Sprint 2's `CR-UI-06` session detail endpoint, Sprint 3's `CR-UI-07` (session count fields) and
+`CR-UI-08` (notes + content endpoints, see below), and Sprint 5's `CR-UI-15` (Agent Path field +
+Agent/Tool content endpoints), `CR-UI-25` (project content endpoint), and `CR-UI-28`
+(`hasNotedDescendant` aggregate). All endpoints below are backed by an Express app
 bound to `127.0.0.1` only, port `4317`
 (`REQUIREMENTS/SHARED_CONSTANTS.md`). Every `GET` endpoint triggers an incremental, mtime-based
 rescan (D13) before reading `index.db`, so responses reflect on-disk changes without a separate
@@ -52,7 +54,12 @@ Read-only, backed by `index.db`.
     "subagentCount": 1,
     "touchedMemory": true,
     "memoryTouchCount": 1,   // (v1.4, CR-UI-07) COUNT(*) over session_memory_touches for this session
-    "toolResultCount": 1     // (v1.4, CR-UI-07) COUNT(*) over tool_result_overflows for this session
+    "toolResultCount": 1,    // (v1.4, CR-UI-07) COUNT(*) over tool_result_overflows for this session
+    "hasNotedDescendant": true // (v1.8, CR-UI-28) true if this session or any of its subagent/
+                                // memory-touch/tool sub-items has a saved note (see Notes below) —
+                                // computed even for a session that has never been drilled down into
+                                // via .../detail, so the client doesn't need to eagerly expand every
+                                // session just to know whether to show the note badge on it.
   }
 ]
 ```
@@ -72,7 +79,15 @@ the tool calls whose results overflowed to disk — for drill-down beyond the ag
 ```jsonc
 {
   "subagents": [
-    { "agentId": "sub1", "agentType": "general-purpose", "description": "Refactor helper" }
+    {
+      "agentId": "sub1",
+      "agentType": "general-purpose",
+      "description": "Refactor helper",
+      "filePath": "D:\\...\\session-bbb\\subagents\\agent-sub1.jsonl" // (v1.6, CR-UI-15) "Agent Path" —
+        // the subagent's own transcript file when one exists on disk (confirmed always present for
+        // real subagent data, per the dev team's on-disk investigation), else its .meta.json path as
+        // a fallback — never null/placeholder for a subagent that was discovered at all.
+    }
   ],
   "memoryTouches": [
     { "filePath": "D:\\...\\memory\\topic1.md", "name": "Auth Notes" } // name: null if unparsed/unknown
@@ -124,6 +139,65 @@ directly from a query parameter, even one that happens to exist on disk.
 
 **Response 400** (missing `path`, or `path` isn't an indexed memory file for `:id`):
 `{ "error": "'<path>' is not a known memory file for project '<id>'." }`
+
+**Response 404** (unknown `:id`): `{ "error": "Unknown project id: <id>" }`
+
+### `GET /api/projects/:id/agent-content?path=<filePath>` (v1.6, CR-UI-15)
+Returns one subagent's readable content, mirroring `.../sessions/:sessionId/content`'s shape.
+**Security requirement, non-negotiable:** `path` is validated against that project's known
+`subagents.file_path` values (a DB lookup against `index.db`, joined through `sessions` on
+`project_id`) *before* anything is read from disk — same pattern as `memory-content`.
+
+If `path` points to the subagent's own transcript (`.jsonl`, the common case per the on-disk
+investigation — real subagent data always has one), the response reuses
+`.../sessions/:sessionId/content`'s message-extraction parser against it. If `path` instead points to
+a `.meta.json` (only possible if no separate transcript file existed on disk at index time — the
+subagent's `filePath` field falls back to it, see `.../detail` above), the response synthesizes a
+single message from that file's `description` field so the response shape is uniform either way.
+
+**Response 200** — `{ messages: SessionContentMessage[] }` (same shape as
+`.../sessions/:sessionId/content`):
+```jsonc
+{
+  "messages": [
+    { "role": "user", "text": "You are a helper agent...", "timestamp": "2026-06-02T09:01:30.000Z" },
+    { "role": "assistant", "text": "Done — auth module refactored.", "timestamp": "2026-06-02T09:01:45.000Z" }
+  ]
+}
+```
+
+**Response 400** (missing `path`, or `path` isn't a known subagent file for `:id`):
+`{ "error": "'<path>' is not a known subagent file for project '<id>'." }`
+
+**Response 404** (unknown `:id`): `{ "error": "Unknown project id: <id>" }`
+
+### `GET /api/projects/:id/tool-content?path=<filePath>` (v1.6, CR-UI-15)
+Returns the raw text of one tool-result overflow file — identical treatment to `memory-content`
+(plain read-only text, no parsing). **Security requirement, non-negotiable:** `path` is validated
+against that project's known `tool_result_overflows.file_path` values (a DB lookup against
+`index.db`, joined through `sessions` on `project_id`) *before* anything is read from disk.
+
+**Response 200:** `{ "content": "Full overflow content that was too large to inline...." }`
+
+**Response 400** (missing `path`, or `path` isn't a known tool result file for `:id`):
+`{ "error": "'<path>' is not a known tool result file for project '<id>'." }`
+
+**Response 404** (unknown `:id`): `{ "error": "Unknown project id: <id>" }`
+
+### `GET /api/projects/:id/content` (v1.7, CR-UI-25)
+Returns project-level content for the project node itself, resolved server-side in priority order:
+`README.md` → `CLAUDE.md` → the earliest session's first `role: "user"` message → none. `README.md`/
+`CLAUDE.md` are read directly under the project's resolved real folder (`getProjectPath(db, id)`,
+already validated at discovery time via a session's own `cwd` field — not a user-supplied path, so
+no additional path-validation surface is introduced here).
+
+**Response 200** — `ProjectContent`:
+```jsonc
+{ "source": "readme", "content": "# My Project\n..." }
+```
+`source` is one of the fixed enum values `"readme" | "claude-md" | "first-message" | "none"`.
+`content` is `null` only when `source` is `"none"` (no `README.md`, no `CLAUDE.md`, and zero
+sessions for the project) — otherwise always the resolved text, never an error state.
 
 **Response 404** (unknown `:id`): `{ "error": "Unknown project id: <id>" }`
 
@@ -209,6 +283,28 @@ future packaged desktop shell), add that origin to `ALLOWED_ORIGINS` in `indexer
 it's a plain array, no other code changes needed.
 
 ## Changelog
+- **v1.8** (2026-07-03, Sprint 5, `CR-UI-28`) — Added `hasNotedDescendant` boolean field to
+  `GET /api/projects/:id/sessions`'s response — true if the session itself or any of its subagent/
+  memory-touch/tool sub-items has a saved note in `annotations.db`'s `notes` table. Computed in
+  application code (never a SQL-level join across `index.db`/`annotations.db`, D16) so a collapsed
+  session that has never been drilled down into via `.../detail` can still show the note-badge
+  indicator. No changes to any existing endpoint/schema.
+- **v1.7** (2026-07-03, Sprint 5, `CR-UI-25`) — Added `GET /api/projects/:id/content` (project-level
+  content: `README.md` → `CLAUDE.md` → earliest session's first user message → `{source: "none",
+  content: null}`). Reuses `sessionContent.ts`'s existing message-extraction parser for the
+  first-message fallback case. No changes to any existing endpoint/schema.
+- **v1.6** (2026-07-03, Sprint 5, `CR-UI-15`) — Added a `filePath` field ("Agent Path") to
+  `GET /api/projects/:id/sessions/:sessionId/detail`'s subagent entries — the subagent's own
+  transcript file when one exists on disk (confirmed always present for real subagent data via the
+  dev team's on-disk investigation against fixture + production Sudoku/Terraza projects), else its
+  `.meta.json` path as a fallback. Added `GET /api/projects/:id/agent-content?path=<filePath>`
+  (subagent content, reuses the session-content parser for a transcript or synthesizes a message
+  from `.meta.json`'s `description` for the fallback case) and
+  `GET /api/projects/:id/tool-content?path=<filePath>` (raw tool-output text, identical treatment to
+  `memory-content`) — both validate `path` against a known file reference for that project (a new
+  `subagents.file_path` column / the existing `tool_result_overflows.file_path`) before ever
+  touching disk, same security pattern as `memory-content`. No changes to any existing
+  endpoint/schema beyond the additive `filePath` field.
 - **v1.5** (2026-07-03, Sprint 3, `CR-UI-08`) — Added `GET /api/projects/:id/sessions/:sessionId/content`
   (readable user/assistant text turns for a session, parsed directly from the `.jsonl`, not cached),
   `GET /api/projects/:id/memory-content?path=<filePath>` (raw memory-file text; validates `path`

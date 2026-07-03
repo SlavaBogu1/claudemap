@@ -3,6 +3,7 @@ import {
   buildGraphElements,
   buildChildElements,
   computeChildClusterPositions,
+  computeChildRowPositions,
   sortSessions,
 } from "./GraphCanvas";
 import type { Project, Session, SessionDetail } from "../types";
@@ -26,6 +27,7 @@ function makeSessions(count: number): Session[] {
     touchedMemory: false,
     memoryTouchCount: 0,
     toolResultCount: 0,
+    hasNotedDescendant: false,
   }));
 }
 
@@ -56,8 +58,8 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
   it("adds exactly 4 child nodes + 4 edges for 2 subagents + 1 memory touch + 1 tool result", () => {
     const detail: SessionDetail = {
       subagents: [
-        { agentId: "a1", agentType: "code-review", description: "review" },
-        { agentId: "a2", agentType: "test-gen", description: "tests" },
+        { agentId: "a1", agentType: "code-review", description: "review", filePath: "agents/a1.jsonl" },
+        { agentId: "a2", agentType: "test-gen", description: "tests", filePath: "agents/a2.jsonl" },
       ],
       memoryTouches: [{ filePath: "memory/PLAN.md", name: "PLAN.md" }],
       overflows: [{ toolUseId: "tool_x", filePath: "overflow/tool_x.txt" }],
@@ -75,18 +77,37 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
     expect(edges.every((e) => e.data.source === "s0")).toBe(true);
   });
 
-  it("labels subagents by agentType, memory touches by name, Tool items by file basename", () => {
+  it("CR-UI-22: uses the simplified fixed label text for each drill-down type — no agent type/filename in-label", () => {
     const detail: SessionDetail = {
-      subagents: [{ agentId: "a1", agentType: "code-review", description: "review" }],
+      subagents: [
+        { agentId: "a1", agentType: "code-review", description: "review", filePath: "agents/a1.jsonl" },
+      ],
       memoryTouches: [{ filePath: "memory/PLAN.md", name: "PLAN.md" }],
       overflows: [{ toolUseId: "tool_x", filePath: "C:\\overflow\\tool_x.txt" }],
     };
     const nodes = buildChildElements("s0", detail).filter((e) => !("source" in e.data));
     const [subagentNode, memoryNode, toolNode] = nodes;
-    expect(subagentNode.data.label).toContain("code-review");
-    expect(memoryNode.data.label).toContain("PLAN.md");
-    expect(toolNode.data.label).toContain("tool_x.txt");
-    expect(toolNode.data.label).toContain("⚙ Tool");
+    expect(subagentNode.data.label).toBe("◆ Agent");
+    expect(memoryNode.data.label).toBe("★ Memory");
+    expect(toolNode.data.label).toBe("⚙ Tool log");
+  });
+
+  it("CR-UI-15: carries subagent/tool filePath into node data (Agent/Tool Path source), distinct from rawId", () => {
+    const detail: SessionDetail = {
+      subagents: [
+        { agentId: "a1", agentType: "code-review", description: "review", filePath: "agents/a1.jsonl" },
+      ],
+      memoryTouches: [{ filePath: "memory/PLAN.md", name: "PLAN.md" }],
+      overflows: [{ toolUseId: "tool_x", filePath: "overflow/tool_x.txt" }],
+    };
+    const nodes = buildChildElements("s0", detail).filter((e) => !("source" in e.data));
+    const [subagentNode, memoryNode, toolNode] = nodes;
+    expect(subagentNode.data.filePath).toBe("agents/a1.jsonl");
+    expect(subagentNode.data.rawId).toBe("a1");
+    expect(toolNode.data.filePath).toBe("overflow/tool_x.txt");
+    expect(toolNode.data.rawId).toBe("tool_x");
+    // Memory's rawId already *is* the file path — no separate filePath field needed.
+    expect(memoryNode.data.rawId).toBe("memory/PLAN.md");
   });
 
   it("adds zero elements for a session with no substructure", () => {
@@ -94,15 +115,14 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
     expect(buildChildElements("s0", detail)).toHaveLength(0);
   });
 
-  it("falls back to the file basename (not the literal string 'null') when a memory touch's name is null", () => {
+  it("CR-UI-22: a null memory-touch name renders the same fixed label without crashing (name no longer used in-label)", () => {
     const detail: SessionDetail = {
       subagents: [],
       memoryTouches: [{ filePath: "C:\\Users\\me\\memory\\deleted-topic.md", name: null }],
       overflows: [],
     };
     const [memoryNode] = buildChildElements("s0", detail).filter((e) => !("source" in e.data));
-    expect(memoryNode.data.label).toContain("deleted-topic.md");
-    expect(memoryNode.data.label).not.toContain("null");
+    expect(memoryNode.data.label).toBe("★ Memory");
   });
 });
 
@@ -155,6 +175,62 @@ describe("computeChildClusterPositions (CR-UI-09 Timeline radial cluster)", () =
   });
 });
 
+describe("computeChildRowPositions (CR-UI-16 Timeline per-type rows)", () => {
+  const parentPos = { x: 500, y: 200 };
+
+  it("returns no positions when every row is empty", () => {
+    expect(computeChildRowPositions(parentPos, [{ ids: [] }, { ids: [] }, { ids: [] }])).toEqual({});
+  });
+
+  it("assigns each present row a distinct, increasing y — a type with zero items gets no row (no gap)", () => {
+    const positions = computeChildRowPositions(parentPos, [
+      { ids: ["m1", "m2"] }, // memory
+      { ids: [] }, // subagent — absent
+      { ids: ["t1"] }, // tool
+    ]);
+    expect(positions.m1.y).toBe(positions.m2.y);
+    // Tool lands in the very next row after Memory — one row step, not two (no reserved gap for
+    // the absent Subagent row).
+    const rowStep = positions.t1.y - positions.m1.y;
+    expect(rowStep).toBeGreaterThan(0);
+
+    const onlyTwoRows = computeChildRowPositions(parentPos, [{ ids: ["m1"] }, { ids: [] }, { ids: ["t1"] }]);
+    expect(onlyTwoRows.t1.y - onlyTwoRows.m1.y).toBe(rowStep);
+  });
+
+  it("orders rows Memory, then Subagent, then Tool, top-to-bottom (increasing y) when all three are present", () => {
+    const positions = computeChildRowPositions(parentPos, [
+      { ids: ["m1"] },
+      { ids: ["s1"] },
+      { ids: ["t1"] },
+    ]);
+    expect(positions.m1.y).toBeLessThan(positions.s1.y);
+    expect(positions.s1.y).toBeLessThan(positions.t1.y);
+  });
+
+  it("spaces 10 same-row siblings evenly along x with no two sharing a position", () => {
+    const ids = Array.from({ length: 10 }, (_, i) => `child${i}`);
+    const positions = computeChildRowPositions(parentPos, [{ ids }]);
+    const xs = ids.map((id) => positions[id].x).sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++) {
+      expect(xs[i] - xs[i - 1]).toBeGreaterThan(20);
+    }
+    // Centered under the parent.
+    const mean = xs.reduce((a, b) => a + b, 0) / xs.length;
+    expect(mean).toBeCloseTo(parentPos.x, 0);
+  });
+
+  it("a single-item row is centered directly under the parent (no unnecessary offset)", () => {
+    const positions = computeChildRowPositions(parentPos, [{ ids: ["only"] }]);
+    expect(positions.only.x).toBe(parentPos.x);
+  });
+
+  it("is deterministic — same input in the same order produces the same positions", () => {
+    const rows = [{ ids: ["m1", "m2"] }, { ids: ["s1"] }, { ids: ["t1", "t2"] }];
+    expect(computeChildRowPositions(parentPos, rows)).toEqual(computeChildRowPositions(parentPos, rows));
+  });
+});
+
 describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
   function makeVariedSessions(): Session[] {
     return [
@@ -169,6 +245,7 @@ describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
         touchedMemory: false,
         memoryTouchCount: 0,
         toolResultCount: 0,
+        hasNotedDescendant: false,
       },
       {
         id: "s-early",
@@ -181,6 +258,7 @@ describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
         touchedMemory: false,
         memoryTouchCount: 0,
         toolResultCount: 0,
+        hasNotedDescendant: false,
       },
       {
         id: "s-late",
@@ -193,6 +271,7 @@ describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
         touchedMemory: false,
         memoryTouchCount: 0,
         toolResultCount: 0,
+        hasNotedDescendant: false,
       },
     ];
   }

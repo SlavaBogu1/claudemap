@@ -65,7 +65,9 @@ test("clicking a session node updates the detail panel with its date/time and pr
   const target = sessions[3];
   await clickGraphNode(page, target.id);
 
-  await expect(page.getByTestId("session-preview")).toHaveText(target.preview);
+  // CR-UI-26 (Sprint 5): the "session-preview" testid now shows the item's note (or "no notes"),
+  // not the raw session.preview text — see cr-ui-26-info-note-preview.spec.ts for that behavior.
+  await expect(page.getByTestId("session-preview")).toHaveText("This item has no notes.");
   const expectedStart = new Date(target.startedAt).toLocaleString();
   await expect(page.getByTestId("session-detail")).toContainText(expectedStart);
 });

@@ -37,6 +37,9 @@ export function parseSubagentMeta(
     sessionId,
     agentType: json.agentType ?? null,
     description: json.description ?? null,
-    toolUseId: json.toolUseId ?? null
+    toolUseId: json.toolUseId ?? null,
+    // Set by the caller (rescan.ts), which knows the sibling transcript file's path/existence —
+    // this parser's job is just the meta.json's own fields (IX-5.1/CR-UI-15).
+    filePath: null
   };
 }

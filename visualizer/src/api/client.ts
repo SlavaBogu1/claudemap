@@ -2,7 +2,15 @@
 // Default base URL per REQUIREMENTS/SHARED_CONSTANTS.md (Indexer binds 127.0.0.1:4317).
 // Override with VITE_API_BASE_URL at build time if ever needed.
 
-import type { NodeType, NoteEntry, Project, Session, SessionContent, SessionDetail } from "../types";
+import type {
+  NodeType,
+  NoteEntry,
+  Project,
+  ProjectContent,
+  Session,
+  SessionContent,
+  SessionDetail,
+} from "../types";
 
 export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -106,6 +114,45 @@ export async function fetchMemoryContent(
     throw new ApiError(await extractErrorMessage(res), res.status);
   }
   return (await res.json()) as { content: string };
+}
+
+// CR-UI-15 (Sprint 5): documented Indexer v1.6 additions. See _API_CONTRACT/CONTRACT.md §
+// GET .../agent-content, § GET .../tool-content.
+
+export async function fetchAgentContent(
+  projectId: string,
+  filePath: string,
+): Promise<SessionContent> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/agent-content?path=${encodeURIComponent(filePath)}`,
+  );
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as SessionContent;
+}
+
+export async function fetchToolContent(
+  projectId: string,
+  filePath: string,
+): Promise<{ content: string }> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/tool-content?path=${encodeURIComponent(filePath)}`,
+  );
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as { content: string };
+}
+
+// CR-UI-25 (Sprint 5): documented Indexer v1.7 addition. See _API_CONTRACT/CONTRACT.md §
+// GET .../content (project-level).
+export async function fetchProjectContent(projectId: string): Promise<ProjectContent> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/content`);
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as ProjectContent;
 }
 
 export async function fetchNotes(projectId: string): Promise<NoteEntry[]> {

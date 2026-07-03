@@ -73,9 +73,12 @@ test.describe("CR-UI-08 — Content tab + inline notes", () => {
     );
   });
 
-  test("saving a note persists it and updates the node's 📝 indicator; deleting removes both", async ({
+  test("saving a note persists it and updates the node's 📝 corner badge; deleting removes both", async ({
     page,
   }) => {
+    // CR-UI-18 (Sprint 4): the note indicator moved from an in-label suffix to a `.note-badge-layer`
+    // corner badge (`[data-testid="note-badge"][data-node-id="..."]`) — see cr-ui-18-note-badge.spec.ts
+    // for the full badge-overlay behavior matrix (all node types, pan/zoom/layout tracking).
     const project = makeProject({ id: "sudoku", sessionCount: 1 });
     const sessions = makeSessions(1);
     const target = sessions[0];
@@ -91,9 +94,10 @@ test.describe("CR-UI-08 — Content tab + inline notes", () => {
     await clickGraphNode(page, target.id);
     await openContentTab(page);
 
-    // No note yet: empty textarea, no Delete button.
+    // No note yet: empty textarea, no Delete button, no badge.
     await expect(page.getByLabel("Note")).toHaveValue("");
     await expect(page.getByRole("button", { name: "Delete Note" })).toHaveCount(0);
+    await expect(page.locator(`[data-testid="note-badge"][data-node-id="${target.id}"]`)).toHaveCount(0);
 
     await page.getByLabel("Note").fill("Revisit this refactor before the release.");
     await page.getByRole("button", { name: "Save" }).click();
@@ -106,26 +110,24 @@ test.describe("CR-UI-08 — Content tab + inline notes", () => {
       content: "Revisit this refactor before the release.",
     });
 
-    // Node indicator appears without a reload.
+    // Node badge appears without a reload.
+    await expect(page.locator(`[data-testid="note-badge"][data-node-id="${target.id}"]`)).toBeVisible();
+
+    // The label itself no longer carries any note indicator (CR-UI-18).
     const label = await page.evaluate((id) => {
       const cy = (window as unknown as { __cy: import("cytoscape").Core }).__cy;
       return cy.getElementById(id).data("label");
     }, target.id);
-    expect(label).toContain("📝");
+    expect(label).not.toContain("📝");
 
-    // Delete button now present; deleting removes the note and the indicator.
+    // Delete button now present; deleting removes the note and the badge.
     await expect(page.getByRole("button", { name: "Delete Note" })).toBeVisible();
     await page.getByRole("button", { name: "Delete Note" }).click();
 
     await expect.poll(() => handle.notes).toHaveLength(0);
     await expect(page.getByLabel("Note")).toHaveValue("");
     await expect(page.getByRole("button", { name: "Delete Note" })).toHaveCount(0);
-
-    const labelAfterDelete = await page.evaluate((id) => {
-      const cy = (window as unknown as { __cy: import("cytoscape").Core }).__cy;
-      return cy.getElementById(id).data("label");
-    }, target.id);
-    expect(labelAfterDelete).not.toContain("📝");
+    await expect(page.locator(`[data-testid="note-badge"][data-node-id="${target.id}"]`)).toHaveCount(0);
   });
 
   test("an item with an existing note shows its content and a Delete button; saving from empty upserts", async ({
@@ -165,33 +167,10 @@ test.describe("CR-UI-08 — Content tab + inline notes", () => {
     await expect.poll(() => handle.notes[0]?.content).toBe("Updated note text.");
   });
 
-  test("subagent, tool, and project items show the placeholder, not an error", async ({ page }) => {
-    const project = makeProject({ id: "sudoku", sessionCount: 1 });
-    const sessions = makeSessions(1);
-    const target = sessions[0];
-    const detail = makeSessionDetail({
-      subagents: [{ agentId: "a1", agentType: "code-review", description: "reviewed the diff" }],
-      overflows: [{ toolUseId: "tool_x", filePath: "overflow/tool_x.txt" }],
-    });
-
-    await mockApi(page, {
-      projects: [project],
-      sessionsByProjectId: { sudoku: sessions },
-      sessionDetailByKey: { [`sudoku/${target.id}`]: detail },
-    });
-
-    await page.goto("/");
-    await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
-    await clickBanner(page, target.id, "subagent");
-    await clickBanner(page, target.id, "tool");
-
-    for (const nodeId of [`${target.id}:subagent:a1`, `${target.id}:tool:tool_x`, `project:sudoku`]) {
-      await clickGraphNode(page, nodeId);
-      await openContentTab(page);
-      await expect(page.getByTestId("content-unsupported")).toBeVisible();
-      await expect(page.locator(".error-text")).toHaveCount(0);
-      // The note editor still works for these item types (notes attach to any item except a note).
-      await expect(page.getByLabel("Note")).toBeVisible();
-    }
-  });
+  // CR-UI-15 (Sprint 5): subagent and Tool items now have real content — see
+  // cr-ui-15-path-fields-agent-tool-content.spec.ts. CR-UI-25 (Sprint 5): the project node also now
+  // has real content (README/CLAUDE.md/first-message fallback) — see
+  // cr-ui-25-project-content.spec.ts. As of Sprint 5, no item type is left on this generic
+  // placeholder; this file's original "subagent, tool, and project items show the placeholder"
+  // regression check no longer has any item type to exercise it against.
 });

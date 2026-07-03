@@ -1,6 +1,22 @@
-import { useEffect, useState } from "react";
-import type { NodeType, NoteEntry, Project, SelectedGraphItem, SessionContentMessage } from "../types";
-import { ApiError, deleteNote, fetchMemoryContent, fetchSessionContent, saveNote } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import type {
+  NodeType,
+  NoteEntry,
+  Project,
+  ProjectContentSource,
+  SelectedGraphItem,
+  SessionContentMessage,
+} from "../types";
+import {
+  ApiError,
+  deleteNote,
+  fetchAgentContent,
+  fetchMemoryContent,
+  fetchProjectContent,
+  fetchSessionContent,
+  fetchToolContent,
+  saveNote,
+} from "../api/client";
 
 // CR-UI-08 (Sprint 3, gated surface — implements the approved mockup exactly): the Detail panel's
 // "Content" tab — real item content (session transcript / memory file text) plus an inline note
@@ -20,13 +36,110 @@ type ContentState =
   | { status: "loading" }
   | { status: "error"; message: string }
   | { status: "session"; messages: SessionContentMessage[] }
-  | { status: "memory"; text: string };
+  | { status: "memory"; text: string }
+  // CR-UI-15 (Sprint 5): Agent (subagent) content — same message shape as session content (either
+  // a real transcript or a single message synthesized from `.meta.json`'s `description`).
+  | { status: "subagent"; messages: SessionContentMessage[] }
+  // CR-UI-15 (Sprint 5): raw tool-output text — identical treatment to memory content.
+  | { status: "tool"; text: string }
+  // CR-UI-25 (Sprint 5): project-level content, resolved server-side (README -> CLAUDE.md ->
+  // earliest session's first user message -> none).
+  | { status: "project"; source: ProjectContentSource; content: string | null };
+
+function projectContentSourceLabel(source: ProjectContentSource): string {
+  switch (source) {
+    case "readme":
+      return "From README.md";
+    case "claude-md":
+      return "From CLAUDE.md";
+    case "first-message":
+      return "First message";
+    default:
+      return "";
+  }
+}
+
+// CR-UI-17 (Sprint 5): client-side search over the already-fetched content view — no new endpoint,
+// no Indexer involvement. Case-insensitive substring match, safe highlighting via normal React
+// child rendering — never raw-HTML injection.
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function countMatches(text: string, query: string): number {
+  if (!query) return 0;
+  const re = new RegExp(escapeRegExp(query), "gi");
+  return (text.match(re) ?? []).length;
+}
+
+// Given one block of plain text, returns React children with every case-insensitive match of
+// `query` wrapped in a safe `<mark>` element (plain array of strings/elements — no HTML-string
+// interpolation). `matchCounter` is a single mutable counter shared across every text block
+// rendered in this pass (a session/subagent transcript has one block per message) so matches are
+// numbered in document order across the whole content view, not restarted per block.
+function renderHighlighted(
+  text: string,
+  query: string,
+  matchCounter: { value: number },
+  currentMatchIndex: number,
+): React.ReactNode {
+  if (!query) return text;
+  const re = new RegExp(`(${escapeRegExp(query)})`, "gi");
+  // A capturing-group split alternates [non-match, match, non-match, match, ...] — even indices
+  // are never matches, odd indices always are; this parity holds regardless of empty segments, so
+  // filtering empties afterward (for rendering only) can't misclassify a real match.
+  return text.split(re).map((part, i) => {
+    if (part.length === 0) return null;
+    if (i % 2 === 0) return <span key={i}>{part}</span>;
+    const matchIndex = matchCounter.value;
+    matchCounter.value += 1;
+    const isCurrent = matchIndex === currentMatchIndex;
+    return (
+      <mark
+        key={i}
+        data-testid={isCurrent ? "search-match-current" : "search-match"}
+        className={isCurrent ? "search-match search-match-current" : "search-match"}
+      >
+        {part}
+      </mark>
+    );
+  });
+}
+
+function getSearchableTexts(content: ContentState): string[] {
+  switch (content.status) {
+    case "session":
+    case "subagent":
+      return content.messages.map((m) => m.text);
+    case "memory":
+    case "tool":
+      return [content.text];
+    case "project":
+      return content.content ? [content.content] : [];
+    default:
+      return [];
+  }
+}
 
 export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDeleted }: ContentTabProps) {
   const [content, setContent] = useState<ContentState>({ status: "none" });
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
+
+  // CR-UI-17: search query + which match (in document order) is "current", for the Previous/Next
+  // navigation and the distinct current-match highlight.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
+  const contentViewRef = useRef<HTMLDivElement>(null);
+
+  // Changing the selected item resets the query/highlights (a stale query over new content would
+  // be confusing).
+  useEffect(() => {
+    setSearchQuery("");
+    setCurrentMatchIndex(0);
+  }, [selectedItem?.nodeType, selectedItem?.rawId]);
 
   const existingNote = selectedItem
     ? (notes.find((n) => n.nodeType === selectedItem.nodeType && n.nodeId === selectedItem.rawId) ?? null)
@@ -76,13 +189,60 @@ export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDe
             });
           }
         });
+    } else if (selectedItem.nodeType === "subagent" && selectedItem.filePath) {
+      // CR-UI-15: Agent content — reuses the session-content message shape (real transcript, or a
+      // single synthesized message from `.meta.json`'s `description`).
+      setContent({ status: "loading" });
+      fetchAgentContent(project.id, selectedItem.filePath)
+        .then((c) => {
+          if (!cancelled) setContent({ status: "subagent", messages: c.messages });
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setContent({
+              status: "error",
+              message: err instanceof ApiError ? err.message : "Failed to load content",
+            });
+          }
+        });
+    } else if (selectedItem.nodeType === "tool" && selectedItem.filePath) {
+      // CR-UI-15: raw tool-output text — identical treatment to memory content.
+      setContent({ status: "loading" });
+      fetchToolContent(project.id, selectedItem.filePath)
+        .then((c) => {
+          if (!cancelled) setContent({ status: "tool", text: c.content });
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setContent({
+              status: "error",
+              message: err instanceof ApiError ? err.message : "Failed to load content",
+            });
+          }
+        });
+    } else if (selectedItem.nodeType === "project") {
+      // CR-UI-25: project-level content, resolved server-side (README -> CLAUDE.md -> earliest
+      // session's first user message -> none).
+      setContent({ status: "loading" });
+      fetchProjectContent(project.id)
+        .then((c) => {
+          if (!cancelled) setContent({ status: "project", source: c.source, content: c.content });
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setContent({
+              status: "error",
+              message: err instanceof ApiError ? err.message : "Failed to load content",
+            });
+          }
+        });
     } else {
       setContent({ status: "unsupported" });
     }
     return () => {
       cancelled = true;
     };
-  }, [project.id, selectedItem?.nodeType, selectedItem?.rawId]);
+  }, [project.id, selectedItem?.nodeType, selectedItem?.rawId, selectedItem?.filePath]);
 
   async function handleSaveNote() {
     if (!selectedItem) return;
@@ -113,6 +273,56 @@ export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDe
     }
   }
 
+  // CR-UI-17: shown for every content type landed this sprint (session/memory/tool/subagent, plus
+  // project when it actually resolved to real text) — hidden for "none"/"loading"/"error"/
+  // "unsupported", where there's nothing to search.
+  const showSearch =
+    content.status === "session" ||
+    content.status === "memory" ||
+    content.status === "subagent" ||
+    content.status === "tool" ||
+    (content.status === "project" && content.source !== "none");
+
+  const searchableTexts = getSearchableTexts(content);
+  const totalMatches = searchQuery
+    ? searchableTexts.reduce((sum, text) => sum + countMatches(text, searchQuery), 0)
+    : 0;
+
+  // Reset to the first match whenever the query (re)produces a different match set, so Next/
+  // Previous always starts from a valid, visible match rather than an index left over from a
+  // longer previous query.
+  useEffect(() => {
+    setCurrentMatchIndex(0);
+  }, [searchQuery]);
+
+  // Scroll the current match into view whenever it changes (new query, or Previous/Next).
+  useEffect(() => {
+    if (!searchQuery || totalMatches === 0) return;
+    const el = contentViewRef.current?.querySelector('[data-testid="search-match-current"]');
+    el?.scrollIntoView?.({ block: "nearest" });
+  }, [currentMatchIndex, searchQuery, totalMatches]);
+
+  function goToNextMatch() {
+    if (totalMatches === 0) return;
+    setCurrentMatchIndex((i) => (i + 1) % totalMatches);
+  }
+
+  function goToPreviousMatch() {
+    if (totalMatches === 0) return;
+    setCurrentMatchIndex((i) => (i - 1 + totalMatches) % totalMatches);
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    if (e.shiftKey) goToPreviousMatch();
+    else goToNextMatch();
+  }
+
+  // Single mutable counter shared across every text block rendered below, so matches are numbered
+  // in document order across the whole content view (e.g. every message of a session transcript).
+  const matchCounter = { value: 0 };
+
   if (!selectedItem) {
     return (
       <div className="content-tab" data-testid="content-tab">
@@ -123,7 +333,34 @@ export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDe
 
   return (
     <div className="content-tab" data-testid="content-tab">
-      <div className="content-view" data-testid="content-view">
+      {/* CR-UI-17: search box, shown for every content type that has real searchable text. */}
+      {showSearch && (
+        <div className="content-search" data-testid="content-search">
+          <input
+            type="text"
+            aria-label="Search content"
+            placeholder="Search…"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={handleSearchKeyDown}
+          />
+          <span className="content-search-count" data-testid="content-search-count">
+            {searchQuery ? (totalMatches > 0 ? `${currentMatchIndex + 1} of ${totalMatches}` : "0 matches") : ""}
+          </span>
+          <button
+            type="button"
+            onClick={goToPreviousMatch}
+            disabled={totalMatches === 0}
+            aria-label="Previous match"
+          >
+            ‹ Prev
+          </button>
+          <button type="button" onClick={goToNextMatch} disabled={totalMatches === 0} aria-label="Next match">
+            Next ›
+          </button>
+        </div>
+      )}
+      <div className="content-view" data-testid="content-view" ref={contentViewRef}>
         {content.status === "loading" && <p className="hint">Loading…</p>}
         {content.status === "error" && <p className="error-text">{content.message}</p>}
         {content.status === "unsupported" && (
@@ -138,16 +375,55 @@ export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDe
             <div className="transcript" data-testid="session-transcript">
               {content.messages.map((m, i) => (
                 <p key={i} className={`transcript-message transcript-${m.role}`}>
-                  <strong>{m.role === "user" ? "User" : "Assistant"}:</strong> {m.text}
+                  <strong>{m.role === "user" ? "User" : "Assistant"}:</strong>{" "}
+                  {renderHighlighted(m.text, searchQuery, matchCounter, currentMatchIndex)}
                 </p>
               ))}
             </div>
           ))}
         {content.status === "memory" && (
           <pre className="memory-content" data-testid="memory-content">
-            {content.text}
+            {renderHighlighted(content.text, searchQuery, matchCounter, currentMatchIndex)}
           </pre>
         )}
+        {/* CR-UI-15: Agent content — same transcript rendering as session content. */}
+        {content.status === "subagent" &&
+          (content.messages.length === 0 ? (
+            <p className="hint">No readable content for this subagent.</p>
+          ) : (
+            <div className="transcript" data-testid="subagent-transcript">
+              {content.messages.map((m, i) => (
+                <p key={i} className={`transcript-message transcript-${m.role}`}>
+                  <strong>{m.role === "user" ? "User" : "Assistant"}:</strong>{" "}
+                  {renderHighlighted(m.text, searchQuery, matchCounter, currentMatchIndex)}
+                </p>
+              ))}
+            </div>
+          ))}
+        {/* CR-UI-15: raw tool-output text — identical treatment to memory content. */}
+        {content.status === "tool" && (
+          <pre className="memory-content" data-testid="tool-content">
+            {renderHighlighted(content.text, searchQuery, matchCounter, currentMatchIndex)}
+          </pre>
+        )}
+        {/* CR-UI-25: project-level content — plain scrollable read-only text (not Markdown-
+            rendered), with a small source label so a first-message fallback doesn't read
+            confusingly like arbitrary chat text with no context. */}
+        {content.status === "project" &&
+          (content.source === "none" ? (
+            <p className="hint" data-testid="project-content-none">
+              No README, CLAUDE.md, or sessions found for this project.
+            </p>
+          ) : (
+            <>
+              <p className="content-source-label" data-testid="project-content-source">
+                {projectContentSourceLabel(content.source)}
+              </p>
+              <pre className="memory-content" data-testid="project-content">
+                {content.content && renderHighlighted(content.content, searchQuery, matchCounter, currentMatchIndex)}
+              </pre>
+            </>
+          ))}
       </div>
 
       <div className="note-editor">

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import { Router } from "express";
 import type { IndexDb } from "../../db/indexDb.js";
 import {
@@ -7,10 +8,13 @@ import {
   getSessionFilePath,
   listProjects,
   listProjectsByRoot,
+  listSessionDescendantNodeRefs,
   listSessions,
   memoryFileExists,
   projectExists,
-  sessionExists
+  sessionExists,
+  subagentFileExists,
+  toolResultFileExists
 } from "../../db/indexDb.js";
 import type { AnnotationsDb } from "../../db/annotationsDb.js";
 import { addScanRoot, deleteNote, listNotes, listScanRoots, upsertNote } from "../../db/annotationsDb.js";
@@ -47,6 +51,29 @@ function resolveAllKnownRoots(options: ProjectsRouterOptions): string[] {
   return roots;
 }
 
+/**
+ * (v1.8, CR-UI-28) Enriches `listSessions`' output with `hasNotedDescendant` — true if the session
+ * itself, or any of its subagent/memory-touch/tool sub-items, has a saved note. Computed in
+ * application code by cross-referencing index.db's per-session sub-item refs against
+ * annotations.db's notes list — never a SQL-level join across the two separate SQLite files (D16).
+ */
+function withHasNotedDescendant(indexDb: IndexDb, annotationsDb: AnnotationsDb, projectId: string) {
+  const sessions = listSessions(indexDb, projectId);
+  const notedKeys = new Set(listNotes(annotationsDb, projectId).map((n) => `${n.nodeType}:${n.nodeId}`));
+
+  const notedSessionIds = new Set<string>();
+  for (const ref of listSessionDescendantNodeRefs(indexDb, projectId)) {
+    if (notedKeys.has(`${ref.nodeType}:${ref.nodeId}`)) {
+      notedSessionIds.add(ref.sessionId);
+    }
+  }
+
+  return sessions.map((s) => ({
+    ...s,
+    hasNotedDescendant: notedKeys.has(`session:${s.id}`) || notedSessionIds.has(s.id)
+  }));
+}
+
 export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   const router = Router();
   const { indexDb, logger } = options;
@@ -63,7 +90,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
       res.status(404).json({ error: `Unknown project id: ${id}` });
       return;
     }
-    res.json(listSessions(indexDb, id));
+    res.json(withHasNotedDescendant(indexDb, options.annotationsDb, id));
   });
 
   router.get("/:id/sessions/:sessionId/detail", (req, res) => {
@@ -159,6 +186,135 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
       res.status(404).json({ error: `Memory file no longer exists on disk: '${filePath}'.` });
       logger.warn(`memory-content: indexed path unreadable: ${filePath}: ${(err as Error).message}`);
     }
+  });
+
+  // (v1.6, CR-UI-15) Subagent content — reuses sessionContent.ts's message-extraction parser
+  // against the subagent's own transcript (IX-5.1: real subagent data always has one); falls back
+  // to rendering the .meta.json's `description` field as a single synthetic message for the rare
+  // case a subagent record's file_path resolved to its meta.json instead (no separate transcript
+  // found on disk at index time) — same response shape either way.
+  router.get("/:id/agent-content", (req, res) => {
+    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    const { id } = req.params;
+    if (!projectExists(indexDb, id)) {
+      res.status(404).json({ error: `Unknown project id: ${id}` });
+      return;
+    }
+
+    const filePath = req.query.path;
+    if (typeof filePath !== "string" || filePath.trim().length === 0) {
+      res.status(400).json({ error: "Request query must include a non-empty string 'path'." });
+      return;
+    }
+
+    // Security requirement (CR-UI-15, same pattern as memory-content): never read an arbitrary
+    // filesystem path from a query parameter — only a path already known to index.db as a
+    // subagent's file for this project is allowed to be read.
+    if (!subagentFileExists(indexDb, id, filePath)) {
+      res.status(400).json({
+        error: `'${filePath}' is not a known subagent file for project '${id}'.`
+      });
+      return;
+    }
+
+    try {
+      if (filePath.toLowerCase().endsWith(".meta.json")) {
+        const raw = fs.readFileSync(filePath, "utf-8");
+        let json: any = {};
+        try {
+          json = JSON.parse(raw);
+        } catch (err) {
+          logger.warn(`agent-content: malformed meta.json at ${filePath}: ${(err as Error).message}`);
+        }
+        const messages =
+          typeof json.description === "string" && json.description.trim().length > 0
+            ? [{ role: "assistant" as const, text: json.description, timestamp: null }]
+            : [];
+        res.json({ messages });
+        return;
+      }
+
+      const messages = parseSessionContent(filePath, logger);
+      res.json({ messages });
+    } catch (err) {
+      res.status(404).json({ error: `Agent file no longer exists on disk: '${filePath}'.` });
+      logger.warn(`agent-content: indexed path unreadable: ${filePath}: ${(err as Error).message}`);
+    }
+  });
+
+  // (v1.6, CR-UI-15) Tool-output content — mirrors memory-content's pattern exactly (raw text,
+  // path validated against a known tool_result_overflows.file_path for this project first).
+  router.get("/:id/tool-content", (req, res) => {
+    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    const { id } = req.params;
+    if (!projectExists(indexDb, id)) {
+      res.status(404).json({ error: `Unknown project id: ${id}` });
+      return;
+    }
+
+    const filePath = req.query.path;
+    if (typeof filePath !== "string" || filePath.trim().length === 0) {
+      res.status(400).json({ error: "Request query must include a non-empty string 'path'." });
+      return;
+    }
+
+    // Security requirement (CR-UI-15, same pattern as memory-content): never read an arbitrary
+    // filesystem path from a query parameter — only a path already known to index.db as a
+    // tool-result overflow file for this project is allowed to be read.
+    if (!toolResultFileExists(indexDb, id, filePath)) {
+      res.status(400).json({
+        error: `'${filePath}' is not a known tool result file for project '${id}'.`
+      });
+      return;
+    }
+
+    try {
+      const content = fs.readFileSync(filePath, "utf-8");
+      res.json({ content });
+    } catch (err) {
+      res.status(404).json({ error: `Tool result file no longer exists on disk: '${filePath}'.` });
+      logger.warn(`tool-content: indexed path unreadable: ${filePath}: ${(err as Error).message}`);
+    }
+  });
+
+  // (v1.7, CR-UI-25) Project-level content: README.md -> CLAUDE.md -> earliest session's first
+  // user message -> none. README/CLAUDE.md live directly under the project's own resolved root
+  // path (getProjectPath), already validated at discovery time — not a user-supplied path, so a
+  // plain fs.existsSync/readFileSync is safe here (same reasoning as open-folder's target path).
+  router.get("/:id/content", (req, res) => {
+    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    const { id } = req.params;
+    if (!projectExists(indexDb, id)) {
+      res.status(404).json({ error: `Unknown project id: ${id}` });
+      return;
+    }
+
+    const projectPath = getProjectPath(indexDb, id)!;
+
+    const readmePath = path.join(projectPath, "README.md");
+    if (fs.existsSync(readmePath)) {
+      res.json({ source: "readme", content: fs.readFileSync(readmePath, "utf-8") });
+      return;
+    }
+
+    const claudeMdPath = path.join(projectPath, "CLAUDE.md");
+    if (fs.existsSync(claudeMdPath)) {
+      res.json({ source: "claude-md", content: fs.readFileSync(claudeMdPath, "utf-8") });
+      return;
+    }
+
+    const sessions = listSessions(indexDb, id); // already sorted by startedAt ascending
+    if (sessions.length > 0) {
+      const earliestSessionFilePath = getSessionFilePath(indexDb, sessions[0].id)!;
+      const messages = parseSessionContent(earliestSessionFilePath, logger);
+      const firstUserMessage = messages.find((m) => m.role === "user");
+      if (firstUserMessage) {
+        res.json({ source: "first-message", content: firstUserMessage.text });
+        return;
+      }
+    }
+
+    res.json({ source: "none", content: null });
   });
 
   router.get("/:id/notes", (req, res) => {

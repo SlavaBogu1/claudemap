@@ -13,6 +13,8 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredSortChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -31,6 +33,8 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredSortChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -49,6 +53,8 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredSortChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -67,6 +73,8 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredSortChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -87,6 +95,8 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredSortChange={onSortChange}
         showBanners={true}
         onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -107,11 +117,33 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredSortChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={onShowBannersChange}
+        theme="system"
+        onThemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
     fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
     fireEvent.click(screen.getByLabelText(/show session banners/i));
     expect(onShowBannersChange).toHaveBeenCalledWith(false);
+  });
+
+  it("Preferences lets the user pick a theme and reports the change (CR-UI-24)", () => {
+    const onThemeChange = vi.fn();
+    render(
+      <BurgerMenu
+        preferredLayout="cose"
+        onPreferredLayoutChange={vi.fn()}
+        preferredSort="date-desc"
+        onPreferredSortChange={vi.fn()}
+        showBanners={true}
+        onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={onThemeChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /menu/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
+    fireEvent.change(screen.getByLabelText(/theme/i), { target: { value: "dark" } });
+    expect(onThemeChange).toHaveBeenCalledWith("dark");
   });
 });
