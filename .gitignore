@@ -1,0 +1,45 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+
+# Indexer's rebuildable SQLite cache — never a source of truth (REQUIREMENTS/SHARED_CONSTANTS.md)
+indexer/data/
+
+# Env / local config
+.env
+.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# --- SDLC process management (local-only — never pushed; REQUIREMENTS/DECISIONS.md D11) ---
+# Stays on disk so the ProductOwner/team agents keep working; only actual code + the API
+# contract are project artefacts that belong on GitHub.
+/README.md
+/PRODUCT_OWNER_PROCESS.md
+/CLAUDE.md
+/roles/
+/skills/
+/templates/
+/REQUIREMENTS/
+/ProductOwner_records/
+/.claude/
+/indexer/CLAUDE.md
+/indexer/TASKS.md
+/visualizer/CLAUDE.md
+/visualizer/TASKS.md
+/tester/CLAUDE.md
+/tester/TASKS.md
+/tester/SECURITY_CHECKLIST.md
