@@ -29,6 +29,7 @@ export interface Fixture {
   sessionAaaPath: string;
   sessionBbbPath: string;
   sessionCccPath: string;
+  memoryTopic1Path: string;
 }
 
 export function buildFixture(): Fixture {
@@ -76,6 +77,11 @@ export function buildFixture(): Fixture {
   const overflowFilePath = path.join(toolResultsDir, "tooluse-overflow-1.txt");
   fs.writeFileSync(overflowFilePath, "Full overflow content that was too large to inline.\n");
 
+  // On real disk, memory/*.md lives under the sanitized project dir (see
+  // REQUIREMENTS/knowledge/CLAUDE_SESSION_FORMAT.md), which is also where a session's Write/Edit
+  // tool_use targets it — so this is the path a real memory-touch record would carry.
+  const memoryTopic1Path = path.join(projectDirPath, "memory", "topic1.md");
+
   writeLines(sessionBbbPath, [
     line({
       type: "user",
@@ -122,7 +128,7 @@ export function buildFixture(): Fixture {
             id: "toolu_mem1",
             name: "Write",
             input: {
-              file_path: "D:\\Fixture\\ProjectOne\\memory\\topic1.md",
+              file_path: memoryTopic1Path,
               content: "Auth refactor notes."
             }
           }
@@ -214,7 +220,7 @@ export function buildFixture(): Fixture {
     ].join("\n")
   );
   fs.writeFileSync(
-    path.join(memoryDir, "topic1.md"),
+    memoryTopic1Path,
     [
       "---",
       "name: Auth Notes",
@@ -235,7 +241,8 @@ export function buildFixture(): Fixture {
     realProjectPath,
     sessionAaaPath,
     sessionBbbPath,
-    sessionCccPath
+    sessionCccPath,
+    memoryTopic1Path
   };
 }
 

@@ -14,6 +14,8 @@ export interface SessionEntry {
   preview: string | null;
   subagentCount: number;
   touchedMemory: boolean;
+  memoryTouchCount: number;
+  toolResultCount: number;
 }
 
 export interface SubagentRecord {
@@ -36,4 +38,48 @@ export interface MemoryFileRecord {
   name: string | null;
   description: string | null;
   type: string | null;
+}
+
+export interface SessionDetailSubagent {
+  agentId: string;
+  agentType: string | null;
+  description: string | null;
+}
+
+export interface SessionDetailMemoryTouch {
+  filePath: string;
+  name: string | null;
+}
+
+export interface SessionDetailOverflow {
+  toolUseId: string | null;
+  filePath: string;
+}
+
+export interface SessionDetail {
+  subagents: SessionDetailSubagent[];
+  memoryTouches: SessionDetailMemoryTouch[];
+  overflows: SessionDetailOverflow[];
+}
+
+/**
+ * The node types a user-authored note (CR-UI-08) can attach to. Fixed vocabulary — the Visualizer
+ * passes one of these as `:nodeType` on the notes endpoints.
+ */
+export type NoteNodeType = "session" | "memoryTouch" | "subagent" | "tool" | "project";
+
+export interface NoteRecord {
+  projectId: string;
+  nodeType: string;
+  nodeId: string;
+  content: string;
+  format: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SessionContentMessage {
+  role: "user" | "assistant";
+  text: string;
+  timestamp: string | null;
 }

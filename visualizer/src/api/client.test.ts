@@ -1,11 +1,19 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { fetchProjects, fetchSessions, openFolder, browseProject, ApiError, API_BASE_URL } from "./client";
+import {
+  fetchProjects,
+  fetchSessions,
+  fetchSessionDetail,
+  openFolder,
+  browseProject,
+  ApiError,
+  API_BASE_URL,
+} from "./client";
 
-const originalFetch = global.fetch;
+const originalFetch = globalThis.fetch;
 
 function mockFetchOnce(body: unknown, init: { ok?: boolean; status?: number } = {}) {
   const { ok = true, status = 200 } = init;
-  global.fetch = vi.fn().mockResolvedValue({
+  globalThis.fetch = vi.fn().mockResolvedValue({
     ok,
     status,
     json: async () => body,
@@ -18,7 +26,7 @@ function mockFetchOnce(body: unknown, init: { ok?: boolean; status?: number } = 
 
 describe("api client", () => {
   afterEach(() => {
-    global.fetch = originalFetch;
+    globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
   });
 
@@ -26,7 +34,7 @@ describe("api client", () => {
     const projects = [{ id: "p1", path: "C:/x", sessionCount: 2, lastActiveAt: "2026-07-01T00:00:00Z" }];
     mockFetchOnce(projects);
     const result = await fetchProjects();
-    expect(global.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects`);
+    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects`);
     expect(result).toEqual(projects);
   });
 
@@ -34,14 +42,26 @@ describe("api client", () => {
     const sessions = [{ id: "s1", startedAt: "t", endedAt: "t2", messageCount: 1, gitBranch: "main", preview: "hi", subagentCount: 0, touchedMemory: false }];
     mockFetchOnce(sessions);
     const result = await fetchSessions("p1");
-    expect(global.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects/p1/sessions`);
+    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects/p1/sessions`);
     expect(result).toEqual(sessions);
+  });
+
+  it("fetchSessionDetail calls GET /api/projects/:id/sessions/:sessionId/detail (CR-UI-06)", async () => {
+    const detail = {
+      subagents: [{ agentId: "a1", agentType: "code-review", description: "review" }],
+      memoryTouches: [],
+      overflows: [],
+    };
+    mockFetchOnce(detail);
+    const result = await fetchSessionDetail("p1", "s1");
+    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects/p1/sessions/s1/detail`);
+    expect(result).toEqual(detail);
   });
 
   it("openFolder POSTs to the open-folder endpoint", async () => {
     mockFetchOnce({ ok: true });
     const result = await openFolder("p1");
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalThis.fetch).toHaveBeenCalledWith(
       `${API_BASE_URL}/api/projects/p1/open-folder`,
       expect.objectContaining({ method: "POST" }),
     );
@@ -52,7 +72,7 @@ describe("api client", () => {
     const project = { id: "p2", path: "C:/y", sessionCount: 0, lastActiveAt: "t" };
     mockFetchOnce(project);
     const result = await browseProject("C:/y");
-    expect(global.fetch).toHaveBeenCalledWith(
+    expect(globalThis.fetch).toHaveBeenCalledWith(
       `${API_BASE_URL}/api/projects/browse`,
       expect.objectContaining({
         method: "POST",

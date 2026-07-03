@@ -18,6 +18,9 @@ export interface MockSession {
   preview: string;
   subagentCount: number;
   touchedMemory: boolean;
+  // CR-UI-07 (Sprint 3): documented Indexer v1.4 additions, backing the session banner row.
+  memoryTouchCount: number;
+  toolResultCount: number;
 }
 
 export function makeProject(overrides: Partial<MockProject> = {}): MockProject {
@@ -40,22 +43,72 @@ export function makeSessions(count: number): MockSession[] {
     preview: `Session ${i} preview text — implemented feature ${i}.`,
     subagentCount: i % 3,
     touchedMemory: i % 2 === 0,
+    memoryTouchCount: i % 2 === 0 ? i % 4 : 0,
+    toolResultCount: i % 5,
   }));
+}
+
+// CR-UI-06 (Sprint 2): mock shape for the documented Indexer v1.3 addition
+// (GET /api/projects/:id/sessions/:sessionId/detail) — never a live Indexer in tests.
+export interface MockSessionDetail {
+  subagents: { agentId: string; agentType: string; description: string }[];
+  memoryTouches: { filePath: string; name: string }[];
+  overflows: { toolUseId: string; filePath: string }[];
+}
+
+export function makeSessionDetail(overrides: Partial<MockSessionDetail> = {}): MockSessionDetail {
+  return { subagents: [], memoryTouches: [], overflows: [], ...overrides };
+}
+
+// CR-UI-08 (Sprint 3): mock shapes for the documented Indexer v1.5 additions — never a live
+// Indexer in tests. `MockNoteEntry` mirrors `NoteEntry` (visualizer/src/types.ts) structurally
+// rather than importing it, consistent with this file's existing Mock* types.
+export type MockNodeType = "session" | "memoryTouch" | "subagent" | "tool" | "project";
+
+export interface MockNoteEntry {
+  projectId: string;
+  nodeType: MockNodeType;
+  nodeId: string;
+  content: string;
+  format: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MockSessionContent {
+  messages: { role: "user" | "assistant"; text: string; timestamp: string }[];
 }
 
 export interface MockApiOptions {
   projects: MockProject[];
   sessionsByProjectId: Record<string, MockSession[]>;
   browseResponse?: { status: number; body: unknown };
+  // Keyed by "<projectId>/<sessionId>". Sessions with no entry get an all-empty detail response.
+  sessionDetailByKey?: Record<string, MockSessionDetail>;
+  // Keyed by "<projectId>/<sessionId>". Sessions with no entry get an empty-messages response.
+  sessionContentByKey?: Record<string, MockSessionContent>;
+  // Keyed by "<projectId>/<filePath>". Paths with no entry get an empty-content response.
+  memoryContentByKey?: Record<string, string>;
+  // Seed notes already "saved" before the test interacts with the app.
+  initialNotes?: MockNoteEntry[];
 }
 
 export interface MockApiHandle {
   openFolderCalls: string[];
   sessionsRequestCount: Record<string, number>;
+  detailRequestCount: Record<string, number>;
+  // CR-UI-08: live, mutated in place as the app calls PUT/DELETE on the notes endpoints — read this
+  // after an interaction to assert what got persisted.
+  notes: MockNoteEntry[];
 }
 
 export async function mockApi(page: Page, options: MockApiOptions): Promise<MockApiHandle> {
-  const handle: MockApiHandle = { openFolderCalls: [], sessionsRequestCount: {} };
+  const handle: MockApiHandle = {
+    openFolderCalls: [],
+    sessionsRequestCount: {},
+    detailRequestCount: {},
+    notes: [...(options.initialNotes ?? [])],
+  };
   let projects = options.projects;
 
   await page.route(`${API_BASE}/api/projects`, (route: Route) => {
@@ -85,12 +138,106 @@ export async function mockApi(page: Page, options: MockApiOptions): Promise<Mock
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(sessions) });
   });
 
+  await page.route(`${API_BASE}/api/projects/*/sessions/*/detail`, (route: Route) => {
+    const url = route.request().url();
+    const match = url.match(/\/api\/projects\/([^/]+)\/sessions\/([^/]+)\/detail/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const sessionId = match ? decodeURIComponent(match[2]) : "";
+    const key = `${projectId}/${sessionId}`;
+    handle.detailRequestCount[key] = (handle.detailRequestCount[key] ?? 0) + 1;
+    const detail = options.sessionDetailByKey?.[key] ?? makeSessionDetail();
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(detail) });
+  });
+
   await page.route(`${API_BASE}/api/projects/*/open-folder`, (route: Route) => {
     const url = route.request().url();
     const match = url.match(/\/api\/projects\/([^/]+)\/open-folder/);
     const projectId = match ? decodeURIComponent(match[1]) : "";
     handle.openFolderCalls.push(projectId);
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true }) });
+  });
+
+  // CR-UI-08 (Sprint 3) additions below — content endpoints (read-only) and the notes CRUD trio.
+
+  await page.route(`${API_BASE}/api/projects/*/sessions/*/content`, (route: Route) => {
+    const url = route.request().url();
+    const match = url.match(/\/api\/projects\/([^/]+)\/sessions\/([^/]+)\/content/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const sessionId = match ? decodeURIComponent(match[2]) : "";
+    const key = `${projectId}/${sessionId}`;
+    const content = options.sessionContentByKey?.[key] ?? { messages: [] };
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(content) });
+  });
+
+  await page.route(`${API_BASE}/api/projects/*/memory-content*`, (route: Route) => {
+    const url = new URL(route.request().url());
+    const match = url.pathname.match(/\/api\/projects\/([^/]+)\/memory-content/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const path = url.searchParams.get("path") ?? "";
+    const key = `${projectId}/${path}`;
+    const content = options.memoryContentByKey?.[key] ?? "";
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ content }) });
+  });
+
+  await page.route(`${API_BASE}/api/projects/*/notes`, (route: Route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const url = route.request().url();
+    const match = url.match(/\/api\/projects\/([^/]+)\/notes/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const projectNotes = handle.notes.filter((n) => n.projectId === projectId);
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(projectNotes) });
+  });
+
+  await page.route(`${API_BASE}/api/projects/*/notes/*/*`, (route: Route) => {
+    const req = route.request();
+    const url = req.url();
+    const match = url.match(/\/api\/projects\/([^/]+)\/notes\/([^/]+)\/([^/?]+)/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const nodeType = (match ? decodeURIComponent(match[2]) : "") as MockNodeType;
+    const nodeId = match ? decodeURIComponent(match[3]) : "";
+
+    if (req.method() === "PUT") {
+      const body = req.postDataJSON() as { content: string; format?: string };
+      const now = new Date().toISOString();
+      const existing = handle.notes.find(
+        (n) => n.projectId === projectId && n.nodeType === nodeType && n.nodeId === nodeId,
+      );
+      const saved: MockNoteEntry = {
+        projectId,
+        nodeType,
+        nodeId,
+        content: body.content,
+        format: body.format ?? "markdown",
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      handle.notes = [
+        ...handle.notes.filter(
+          (n) => !(n.projectId === projectId && n.nodeType === nodeType && n.nodeId === nodeId),
+        ),
+        saved,
+      ];
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(saved) });
+    }
+
+    if (req.method() === "DELETE") {
+      const existed = handle.notes.some(
+        (n) => n.projectId === projectId && n.nodeType === nodeType && n.nodeId === nodeId,
+      );
+      handle.notes = handle.notes.filter(
+        (n) => !(n.projectId === projectId && n.nodeType === nodeType && n.nodeId === nodeId),
+      );
+      if (!existed) {
+        return route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "No note found" }),
+        });
+      }
+      return route.fulfill({ status: 204 });
+    }
+
+    return route.continue();
   });
 
   return handle;
@@ -109,5 +256,17 @@ export async function clickGraphNode(page: Page, nodeId: string): Promise<void> 
     return node.renderedPosition();
   }, nodeId);
   await page.mouse.click(box.x + pos.x, box.y + pos.y);
+}
+
+// CR-UI-07: unlike graph nodes, session banners are real HTML buttons (an overlay, not Cytoscape
+// elements) — a plain Playwright click, no canvas-coordinate simulation needed.
+export async function clickBanner(
+  page: Page,
+  sessionId: string,
+  banner: "memory" | "subagent" | "tool",
+): Promise<void> {
+  await page
+    .locator(`[data-testid="session-banner-row"][data-session-id="${sessionId}"] [data-banner="${banner}"]`)
+    .click();
 }
 

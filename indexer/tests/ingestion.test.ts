@@ -85,6 +85,14 @@ describe("ingestion (CR-CORE-01)", () => {
     expect(row.file_path).toContain("tooluse-overflow-1.txt");
   });
 
+  it("records the specific memory file touched by a session (CR-UI-06)", () => {
+    const rows = db
+      .prepare(`SELECT * FROM session_memory_touches WHERE session_id = 'session-bbb'`)
+      .all() as any[];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].file_path).toBe(fixture.memoryTopic1Path);
+  });
+
   it("parses memory/*.md frontmatter per project", () => {
     const rows = db
       .prepare(`SELECT * FROM memory_files WHERE project_id = ? ORDER BY file_path`)

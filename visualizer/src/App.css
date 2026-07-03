@@ -10,6 +10,57 @@
 .graph-canvas-wrapper {
   width: 100%;
   height: 100%;
+  /* CR-UI-07: anchors the absolutely-positioned session-banner overlay to the canvas, not some
+     further-out ancestor. */
+  position: relative;
+}
+
+/* CR-UI-07: banner row overlay — real HTML (not Cytoscape nodes), so each banner is directly,
+   independently clickable without canvas-coordinate hit-testing. `pointer-events: none` on the
+   layer/row keeps the canvas panable everywhere except the small banner buttons themselves. */
+.session-banner-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.session-banner-row {
+  position: absolute;
+  transform: translate(-50%, -100%);
+  display: flex;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.session-banner {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.session-banner-memory {
+  border-color: #f2c14e;
+}
+
+.session-banner-subagent {
+  border-color: #3b6bff;
+}
+
+.session-banner-tool {
+  border-color: #9a97a1;
+}
+
+.session-banner:hover {
+  background: rgba(128, 128, 128, 0.15);
 }
 
 .app-shell {
@@ -52,11 +103,28 @@
 }
 
 .detail-panel {
+  /* CR-UI-11: default/fallback width when no inline `width` style is applied (e.g. tests that
+     render DetailPanel standalone without the `width` prop); App.tsx normally sets an inline
+     `width` driven by the drag handle, clamped to [250px, 800px]. */
   width: 280px;
+  min-width: 250px;
+  max-width: 800px;
   flex-shrink: 0;
   border-left: 1px solid var(--border);
   padding: 16px;
   overflow-y: auto;
+}
+
+.detail-resize-handle {
+  width: 3px;
+  flex-shrink: 0;
+  cursor: col-resize;
+  background: var(--border);
+}
+
+.detail-resize-handle:hover,
+.detail-resize-handle:active {
+  background: var(--accent);
 }
 
 .detail-panel h2 {
@@ -113,7 +181,8 @@
 }
 
 .project-picker,
-.layout-switcher {
+.layout-switcher,
+.sort-switcher {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -202,4 +271,69 @@
   align-items: center;
   gap: 8px;
   margin: 16px 0;
+}
+
+/* CR-UI-08 (gated, approved mockup): Detail panel tab strip + Content tab. */
+.detail-tab-strip {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.detail-tab-strip button {
+  background: none;
+  border: none;
+  padding: 6px 10px;
+  border-bottom: 2px solid transparent;
+  color: var(--text);
+}
+
+.detail-tab-strip button.active {
+  color: var(--text-h);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.content-view {
+  max-height: 40vh;
+  overflow-y: auto;
+  padding: 8px;
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 4px;
+}
+
+.transcript-message {
+  margin: 0 0 8px;
+  white-space: pre-wrap;
+}
+
+.memory-content {
+  margin: 0;
+  white-space: pre-wrap;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.note-editor {
+  margin-top: 16px;
+}
+
+.note-editor h3 {
+  margin-bottom: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.note-textarea {
+  width: 100%;
+  font-family: inherit;
+  font-size: inherit;
+  resize: vertical;
+}
+
+.note-actions {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
 }

@@ -1,5 +1,12 @@
 import Database from "better-sqlite3";
-import type { MemoryFileRecord, ProjectEntry, SessionEntry, SubagentRecord, ToolResultOverflowRecord } from "../types.js";
+import type {
+  MemoryFileRecord,
+  ProjectEntry,
+  SessionDetail,
+  SessionEntry,
+  SubagentRecord,
+  ToolResultOverflowRecord
+} from "../types.js";
 
 export type IndexDb = Database.Database;
 
@@ -57,6 +64,11 @@ export function openIndexDb(filePath: string): IndexDb {
       description TEXT,
       type TEXT,
       last_indexed_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS session_memory_touches (
+      session_id TEXT NOT NULL,
+      file_path TEXT NOT NULL
     );
   `);
   return db;
@@ -147,6 +159,16 @@ export function replaceOverflows(db: IndexDb, sessionId: string, records: ToolRe
   }
 }
 
+export function replaceMemoryTouches(db: IndexDb, sessionId: string, filePaths: string[]): void {
+  db.prepare(`DELETE FROM session_memory_touches WHERE session_id = ?`).run(sessionId);
+  const insert = db.prepare(
+    `INSERT INTO session_memory_touches (session_id, file_path) VALUES (?, ?)`
+  );
+  for (const filePath of filePaths) {
+    insert.run(sessionId, filePath);
+  }
+}
+
 export function upsertMemoryFile(
   db: IndexDb,
   record: MemoryFileRecord,
@@ -234,12 +256,20 @@ export function getProjectPath(db: IndexDb, id: string): string | null {
 export function listSessions(db: IndexDb, projectId: string): SessionEntry[] {
   const rows = db
     .prepare(
-      `SELECT id, started_at AS startedAt, ended_at AS endedAt, message_count AS messageCount,
-              git_branch AS gitBranch, preview, subagent_count AS subagentCount,
-              touched_memory AS touchedMemory
-       FROM sessions
-       WHERE project_id = ?
-       ORDER BY started_at`
+      `SELECT s.id AS id, s.started_at AS startedAt, s.ended_at AS endedAt,
+              s.message_count AS messageCount, s.git_branch AS gitBranch, s.preview,
+              s.subagent_count AS subagentCount, s.touched_memory AS touchedMemory,
+              COALESCE(mt.cnt, 0) AS memoryTouchCount,
+              COALESCE(tr.cnt, 0) AS toolResultCount
+       FROM sessions s
+       LEFT JOIN (
+         SELECT session_id, COUNT(*) AS cnt FROM session_memory_touches GROUP BY session_id
+       ) mt ON mt.session_id = s.id
+       LEFT JOIN (
+         SELECT session_id, COUNT(*) AS cnt FROM tool_result_overflows GROUP BY session_id
+       ) tr ON tr.session_id = s.id
+       WHERE s.project_id = ?
+       ORDER BY s.started_at`
     )
     .all(projectId) as any[];
 
@@ -251,6 +281,67 @@ export function listSessions(db: IndexDb, projectId: string): SessionEntry[] {
     gitBranch: r.gitBranch,
     preview: r.preview,
     subagentCount: r.subagentCount,
-    touchedMemory: !!r.touchedMemory
+    touchedMemory: !!r.touchedMemory,
+    memoryTouchCount: r.memoryTouchCount,
+    toolResultCount: r.toolResultCount
   }));
+}
+
+/** The on-disk `.jsonl` path for a session, for GET .../content (CR-UI-08). */
+export function getSessionFilePath(db: IndexDb, sessionId: string): string | null {
+  const row = db.prepare(`SELECT file_path FROM sessions WHERE id = ?`).get(sessionId) as
+    | { file_path: string }
+    | undefined;
+  return row ? row.file_path : null;
+}
+
+/**
+ * Whether `filePath` is a known, indexed memory file for `projectId` — the security check GET
+ * .../memory-content relies on before ever touching the filesystem with a query-param path
+ * (CR-UI-08: never read an arbitrary path from a query parameter).
+ */
+export function memoryFileExists(db: IndexDb, projectId: string, filePath: string): boolean {
+  const row = db
+    .prepare(`SELECT 1 FROM memory_files WHERE project_id = ? AND file_path = ?`)
+    .get(projectId, filePath);
+  return !!row;
+}
+
+export function sessionExists(db: IndexDb, projectId: string, sessionId: string): boolean {
+  const row = db
+    .prepare(`SELECT 1 FROM sessions WHERE project_id = ? AND id = ?`)
+    .get(projectId, sessionId);
+  return !!row;
+}
+
+export function getSessionDetail(db: IndexDb, sessionId: string): SessionDetail {
+  const subagents = db
+    .prepare(
+      `SELECT agent_id AS agentId, agent_type AS agentType, description
+       FROM subagents
+       WHERE session_id = ?
+       ORDER BY agent_id`
+    )
+    .all(sessionId) as { agentId: string; agentType: string | null; description: string | null }[];
+
+  const memoryTouches = db
+    .prepare(
+      `SELECT smt.file_path AS filePath, mf.name AS name
+       FROM session_memory_touches smt
+       LEFT JOIN memory_files mf ON mf.file_path = smt.file_path
+       WHERE smt.session_id = ?
+       ORDER BY smt.file_path`
+    )
+    .all(sessionId) as { filePath: string; name: string | null }[];
+
+  const overflows = db
+    .prepare(
+      `SELECT tool_use_id AS toolUseId, file_path AS filePath
+       FROM tool_result_overflows
+       WHERE session_id = ?
+       ORDER BY file_path`
+    )
+    .all(sessionId) as { toolUseId: string | null; filePath: string }[];
+
+  return { subagents, memoryTouches, overflows };
 }

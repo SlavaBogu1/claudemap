@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { LayoutName } from "../types";
+import type { LayoutName, SortName } from "../types";
 import { PreferencesPanel } from "./PreferencesPanel";
 import { AboutPanel } from "./AboutPanel";
 import { DocumentationPanel } from "./DocumentationPanel";
@@ -9,9 +9,20 @@ type ActivePanel = "preferences" | "about" | "documentation" | null;
 export interface BurgerMenuProps {
   preferredLayout: LayoutName;
   onPreferredLayoutChange: (layout: LayoutName) => void;
+  preferredSort: SortName;
+  onPreferredSortChange: (sort: SortName) => void;
+  showBanners: boolean;
+  onShowBannersChange: (show: boolean) => void;
 }
 
-export function BurgerMenu({ preferredLayout, onPreferredLayoutChange }: BurgerMenuProps) {
+export function BurgerMenu({
+  preferredLayout,
+  onPreferredLayoutChange,
+  preferredSort,
+  onPreferredSortChange,
+  showBanners,
+  onShowBannersChange,
+}: BurgerMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
 
@@ -70,6 +81,10 @@ export function BurgerMenu({ preferredLayout, onPreferredLayoutChange }: BurgerM
         <PreferencesPanel
           layout={preferredLayout}
           onChange={onPreferredLayoutChange}
+          sort={preferredSort}
+          onSortChange={onPreferredSortChange}
+          showBanners={showBanners}
+          onShowBannersChange={onShowBannersChange}
           onClose={() => setActivePanel(null)}
         />
       )}

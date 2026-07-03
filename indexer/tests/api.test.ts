@@ -76,4 +76,43 @@ describe("HTTP API (CR-API-01)", () => {
     expect(res.status).toBe(404);
     expect(openFolderMock).not.toHaveBeenCalled();
   });
+
+  it("GET /api/projects/:id/sessions/:sessionId/detail returns subagents, memory touches, and overflows (CR-UI-06)", async () => {
+    const res = await request(app).get(
+      `/api/projects/${fixture.projectDirName}/sessions/session-bbb/detail`
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      subagents: [{ agentId: "sub1", agentType: "general-purpose", description: "Refactor helper" }],
+      memoryTouches: [{ filePath: fixture.memoryTopic1Path, name: "Auth Notes" }],
+      overflows: [
+        {
+          toolUseId: "toolu_big1",
+          filePath: expect.stringContaining("tooluse-overflow-1.txt")
+        }
+      ]
+    });
+  });
+
+  it("GET /api/projects/:id/sessions/:sessionId/detail returns empty arrays for a session with no substructure", async () => {
+    const res = await request(app).get(
+      `/api/projects/${fixture.projectDirName}/sessions/session-aaa/detail`
+    );
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ subagents: [], memoryTouches: [], overflows: [] });
+  });
+
+  it("GET /api/projects/:id/sessions/:sessionId/detail for an unknown project returns a clean 404", async () => {
+    const res = await request(app).get("/api/projects/does-not-exist/sessions/session-bbb/detail");
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("GET /api/projects/:id/sessions/:sessionId/detail for an unknown session returns a clean 404", async () => {
+    const res = await request(app).get(
+      `/api/projects/${fixture.projectDirName}/sessions/does-not-exist/detail`
+    );
+    expect(res.status).toBe(404);
+    expect(res.body).toHaveProperty("error");
+  });
 });

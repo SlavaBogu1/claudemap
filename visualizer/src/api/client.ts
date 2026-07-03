@@ -2,7 +2,7 @@
 // Default base URL per REQUIREMENTS/SHARED_CONSTANTS.md (Indexer binds 127.0.0.1:4317).
 // Override with VITE_API_BASE_URL at build time if ever needed.
 
-import type { Project, Session } from "../types";
+import type { NodeType, NoteEntry, Project, Session, SessionContent, SessionDetail } from "../types";
 
 export const API_BASE_URL: string =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
@@ -52,6 +52,22 @@ export async function fetchSessions(projectId: string): Promise<Session[]> {
   return (await res.json()) as Session[];
 }
 
+// CR-UI-06 (Sprint 2): documented Indexer v1.3 addition (see _API_CONTRACT/CONTRACT.md once the
+// Indexer publishes it — this is the ProductOwner-documented schema, built against ahead of a live
+// endpoint per the Sprint 2 brief; never invent fields beyond what's documented).
+export async function fetchSessionDetail(
+  projectId: string,
+  sessionId: string,
+): Promise<SessionDetail> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/detail`,
+  );
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as SessionDetail;
+}
+
 export async function openFolder(projectId: string): Promise<{ ok: true }> {
   const res = await fetch(
     `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/open-folder`,
@@ -61,6 +77,74 @@ export async function openFolder(projectId: string): Promise<{ ok: true }> {
     throw new ApiError(await extractErrorMessage(res), res.status);
   }
   return (await res.json()) as { ok: true };
+}
+
+// CR-UI-08 (Sprint 3): documented Indexer v1.5 additions. See _API_CONTRACT/CONTRACT.md §
+// GET .../content, § GET .../memory-content, § Notes.
+
+export async function fetchSessionContent(
+  projectId: string,
+  sessionId: string,
+): Promise<SessionContent> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/content`,
+  );
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as SessionContent;
+}
+
+export async function fetchMemoryContent(
+  projectId: string,
+  filePath: string,
+): Promise<{ content: string }> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/memory-content?path=${encodeURIComponent(filePath)}`,
+  );
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as { content: string };
+}
+
+export async function fetchNotes(projectId: string): Promise<NoteEntry[]> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/notes`);
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as NoteEntry[];
+}
+
+export async function saveNote(
+  projectId: string,
+  nodeType: NodeType,
+  nodeId: string,
+  content: string,
+): Promise<NoteEntry> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/notes/${encodeURIComponent(nodeType)}/${encodeURIComponent(nodeId)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ content }),
+    },
+  );
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as NoteEntry;
+}
+
+export async function deleteNote(projectId: string, nodeType: NodeType, nodeId: string): Promise<void> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/notes/${encodeURIComponent(nodeType)}/${encodeURIComponent(nodeId)}`,
+    { method: "DELETE" },
+  );
+  // 204 (success) is already within Response.ok's 200-299 range — only a genuine error status throws.
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
 }
 
 export async function browseProject(path: string): Promise<Project[]> {

@@ -21,10 +21,11 @@ export interface CreateAppOptions {
 
 /**
  * CORS policy (CR-API-02): explicit origin allowlist, never a wildcard `*`. This API is
- * local-only but side-effecting (`open-folder`, `browse`), so a wildcard would let any website's
- * JavaScript read project paths and trigger those endpoints from a victim's browser. Requests with
- * no `Origin` header (curl, server-to-server, same-origin) are always allowed through — CORS is a
- * browser-enforced, cross-origin-only concept and doesn't apply to them.
+ * local-only but side-effecting (`open-folder`, `browse`, and now the CR-UI-08 notes
+ * create/update/delete endpoints), so a wildcard would let any website's JavaScript read project
+ * paths and trigger those endpoints from a victim's browser. Requests with no `Origin` header
+ * (curl, server-to-server, same-origin) are always allowed through — CORS is a browser-enforced,
+ * cross-origin-only concept and doesn't apply to them.
  */
 function buildCorsMiddleware(allowedOrigins: string[]) {
   return cors({
@@ -35,7 +36,7 @@ function buildCorsMiddleware(allowedOrigins: string[]) {
       }
       callback(null, false);
     },
-    methods: ["GET", "POST"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type"]
   });
 }

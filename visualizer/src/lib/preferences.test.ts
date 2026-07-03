@@ -15,6 +15,11 @@ describe("preferences", () => {
     expect(getPreferredLayout()).toBe("breadthfirst");
   });
 
+  it("persists and returns the timeline layout choice (CR-UI-05)", () => {
+    setPreferredLayout("timeline");
+    expect(getPreferredLayout()).toBe("timeline");
+  });
+
   it("falls back to default for an invalid stored value", () => {
     localStorage.setItem("claudeMap.preferredLayout", "not-a-layout");
     expect(getPreferredLayout()).toBe("cose");

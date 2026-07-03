@@ -12,6 +12,7 @@ export interface ParsedSession {
   cwd: string | null;
   preview: string | null;
   touchedMemory: boolean;
+  memoryTouches: string[];
   overflows: ToolResultOverflowRecord[];
 }
 
@@ -33,6 +34,7 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
   let slug: string | null = null;
   let cwd: string | null = null;
   let touchedMemory = false;
+  const memoryTouches = new Set<string>();
   const overflows: ToolResultOverflowRecord[] = [];
 
   let firstUserText: string | null = null;
@@ -67,6 +69,7 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
           const targetPath: string | undefined = block.input?.file_path ?? block.input?.path;
           if (targetPath && /[\\/]memory[\\/]/i.test(targetPath)) {
             touchedMemory = true;
+            memoryTouches.add(targetPath);
           }
         }
       }
@@ -111,6 +114,7 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
     cwd,
     preview,
     touchedMemory,
+    memoryTouches: Array.from(memoryTouches),
     overflows
   };
 }

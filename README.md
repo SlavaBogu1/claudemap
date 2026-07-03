@@ -6,6 +6,16 @@ revisit valuable work across many long-running sessions instead of losing track 
 
 Everything runs entirely on your own machine. No data leaves your computer.
 
+## Screenshots
+
+| Project graph | Session detail |
+|---|---|
+| ![Project graph with session summary banners](docs/screenshots/01-graph-overview.png) | ![Session detail panel](docs/screenshots/02-session-detail.png) |
+
+| Real session content | Timeline layout with drill-down |
+|---|---|
+| ![Content tab showing a real session transcript](docs/screenshots/03-content-tab.png) | ![Timeline layout with a tool-result drill-down](docs/screenshots/04-timeline-drilldown.png) |
+
 ## What it does
 
 Claude Code sessions accumulate fast — dozens of chats per project, each with subagent runs, memory

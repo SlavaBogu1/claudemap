@@ -4,6 +4,7 @@ import type { IndexDb } from "../db/indexDb.js";
 import {
   getMemoryFileMtime,
   getSessionMtime,
+  replaceMemoryTouches,
   replaceOverflows,
   replaceSubagents,
   updateProjectPath,
@@ -130,6 +131,7 @@ function rescanProjectSessions(
 
     replaceSubagents(db, sessionId, subagentRecords);
     replaceOverflows(db, sessionId, parsed.overflows);
+    replaceMemoryTouches(db, sessionId, parsed.memoryTouches);
 
     upsertSession(db, {
       id: sessionId,
