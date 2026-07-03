@@ -5,7 +5,8 @@ node_modules/
 dist/
 build/
 
-# Indexer's rebuildable SQLite cache — never a source of truth (REQUIREMENTS/SHARED_CONSTANTS.md)
+# Indexer local data: index.db (rebuildable cache) + annotations.db (durable user
+# bookmarks/links — irreplaceable, not backed up by git; see D16) (REQUIREMENTS/SHARED_CONSTANTS.md)
 indexer/data/
 
 # Env / local config
@@ -38,8 +39,8 @@ Thumbs.db
 /.claude/
 /indexer/CLAUDE.md
 /indexer/TASKS.md
+/indexer/requirements/
 /visualizer/CLAUDE.md
 /visualizer/TASKS.md
-/tester/CLAUDE.md
-/tester/TASKS.md
-/tester/SECURITY_CHECKLIST.md
+/visualizer/requirements/
+/tester/

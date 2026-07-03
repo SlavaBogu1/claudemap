@@ -1,0 +1,33 @@
+{
+  "name": "claude-session-explorer-indexer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Indexer service for Claude Session Explorer: parses Claude Code session/memory/git data into a queryable local SQLite index and serves it over a local-only HTTP API.",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/server.js",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.7.4",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.1"
+  }
+}
