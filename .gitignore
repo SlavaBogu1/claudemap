@@ -25,10 +25,12 @@ Thumbs.db
 .vscode/
 .idea/
 
-# --- SDLC process management (local-only — never pushed; REQUIREMENTS/DECISIONS.md D11) ---
+# --- SDLC process management (local-only — never pushed; REQUIREMENTS/DECISIONS.md D11, D21) ---
 # Stays on disk so the ProductOwner/team agents keep working; only actual code + the API
-# contract are project artefacts that belong on GitHub.
-/README.md
+# contract + the product README/LICENSE are project artefacts that belong on GitHub.
+# D21: root README.md is now the PRODUCT's README (tracked); the process package's own
+# README lives at /SDLC_PROCESS_README.md instead (still gitignored, content unchanged).
+/SDLC_PROCESS_README.md
 /PRODUCT_OWNER_PROCESS.md
 /CLAUDE.md
 /roles/
