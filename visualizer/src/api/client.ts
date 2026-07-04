@@ -3,6 +3,7 @@
 // Override with VITE_API_BASE_URL at build time if ever needed.
 
 import type {
+  ClaudeMapNoteEntry,
   NodeType,
   NoteEntry,
   Project,
@@ -192,6 +193,18 @@ export async function deleteNote(projectId: string, nodeType: NodeType, nodeId: 
   if (!res.ok) {
     throw new ApiError(await extractErrorMessage(res), res.status);
   }
+}
+
+// CR-CORE-03 (Sprint 6): documented Indexer v1.9 addition. See _API_CONTRACT/CONTRACT.md §
+// Claude-map notes. Read-only — no PUT/DELETE client for this resource, ever (ingest-written only).
+export async function fetchClaudeMapNotes(projectId: string): Promise<ClaudeMapNoteEntry[]> {
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/claude-map-notes`,
+  );
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as ClaudeMapNoteEntry[];
 }
 
 export async function browseProject(path: string): Promise<Project[]> {

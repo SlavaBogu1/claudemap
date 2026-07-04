@@ -1,12 +1,13 @@
 import Database from "better-sqlite3";
-import type { NoteRecord } from "../types.js";
+import type { ClaudeMapNoteRecord, NoteRecord } from "../types.js";
 
 export type AnnotationsDb = Database.Database;
 
 /**
  * Open (or create) the durable annotations.db store. This file holds user-authored data only
- * (custom scan roots, D20; notes, CR-UI-08; bookmarks/links planned per D14) — a rescan/rebuild of
- * index.db must never read from or write to this file (D16).
+ * (custom scan roots, D20; notes, CR-UI-08; claude-map notes, CR-CORE-03 — ingest-written, not
+ * user-authored, but still durable and never rebuildable; bookmarks/links planned per D14) — a
+ * rescan/rebuild of index.db must never read from or write to this file (D16).
  */
 export function openAnnotationsDb(filePath: string): AnnotationsDb {
   const db = new Database(filePath);
@@ -23,6 +24,16 @@ export function openAnnotationsDb(filePath: string): AnnotationsDb {
       node_id TEXT NOT NULL,
       content TEXT NOT NULL,
       format TEXT NOT NULL DEFAULT 'markdown',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (project_id, node_type, node_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS claude_map_notes (
+      project_id TEXT NOT NULL,
+      node_type TEXT NOT NULL,
+      node_id TEXT NOT NULL,
+      content TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (project_id, node_type, node_id)
@@ -111,6 +122,87 @@ export function upsertNote(
 export function deleteNote(db: AnnotationsDb, projectId: string, nodeType: string, nodeId: string): boolean {
   const result = db
     .prepare(`DELETE FROM notes WHERE project_id = ? AND node_type = ? AND node_id = ?`)
+    .run(projectId, nodeType, nodeId);
+  return result.changes > 0;
+}
+
+function toClaudeMapNoteRecord(row: {
+  project_id: string;
+  node_type: string;
+  node_id: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}): ClaudeMapNoteRecord {
+  return {
+    projectId: row.project_id,
+    nodeType: row.node_type,
+    nodeId: row.node_id,
+    content: row.content,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+/**
+ * All claude-map notes for a project (CR-CORE-03) — one aggregated, view-only note per session that
+ * has at least one `[claude-map] <text>` marker in its transcript.
+ */
+export function listClaudeMapNotes(db: AnnotationsDb, projectId: string): ClaudeMapNoteRecord[] {
+  const rows = db
+    .prepare(
+      `SELECT project_id, node_type, node_id, content, created_at, updated_at
+       FROM claude_map_notes WHERE project_id = ? ORDER BY node_type, node_id`
+    )
+    .all(projectId) as any[];
+  return rows.map(toClaudeMapNoteRecord);
+}
+
+/**
+ * Create-or-replace a claude-map note (CR-CORE-03), ingest-time only — never called from a
+ * client-facing endpoint. `created_at` is preserved across updates; `updated_at` always reflects
+ * the current write. Unlike `upsertNote`, there is no user-edit path into this table, so a rescan is
+ * always free to replace the row's content wholesale (no collision to guard against).
+ */
+export function upsertClaudeMapNote(
+  db: AnnotationsDb,
+  projectId: string,
+  nodeType: string,
+  nodeId: string,
+  content: string,
+  now: () => string = () => new Date().toISOString()
+): ClaudeMapNoteRecord {
+  const timestamp = now();
+  db.prepare(
+    `INSERT INTO claude_map_notes (project_id, node_type, node_id, content, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(project_id, node_type, node_id) DO UPDATE SET
+       content = excluded.content,
+       updated_at = excluded.updated_at`
+  ).run(projectId, nodeType, nodeId, content, timestamp, timestamp);
+
+  const row = db
+    .prepare(
+      `SELECT project_id, node_type, node_id, content, created_at, updated_at
+       FROM claude_map_notes WHERE project_id = ? AND node_type = ? AND node_id = ?`
+    )
+    .get(projectId, nodeType, nodeId) as any;
+  return toClaudeMapNoteRecord(row);
+}
+
+/**
+ * Deletes a claude-map note, ingest-time only (CR-CORE-03) — used when a rescan finds a session's
+ * marker set has become empty (e.g. transcript no longer contains any `[claude-map]` line), so a
+ * stale aggregated note is never left behind. Returns whether a row actually existed.
+ */
+export function deleteClaudeMapNote(
+  db: AnnotationsDb,
+  projectId: string,
+  nodeType: string,
+  nodeId: string
+): boolean {
+  const result = db
+    .prepare(`DELETE FROM claude_map_notes WHERE project_id = ? AND node_type = ? AND node_id = ?`)
     .run(projectId, nodeType, nodeId);
   return result.changes > 0;
 }

@@ -141,6 +141,13 @@ test.describe("CR-UI-04 (reopen) — Resume command relocated into Info", () => 
     await page.goto("/");
     await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
     await clickGraphNode(page, target.id);
+    // CR-UI-07's body-click behavior fires its own (legitimate, unrelated) async detail fetch as a
+    // side effect of selecting the session — wait for it to fully settle before attaching the
+    // listener below, so a slow-scheduled tail of *that* request can't be misattributed to the
+    // resume-command Copy click under heavier parallel-worker CPU contention (this was a source of
+    // flakiness, not a real regression — a fixed timeout after attaching the listener raced against
+    // that already-in-flight request instead of waiting it out).
+    await page.waitForLoadState("networkidle");
 
     const requestsAfterSelection: string[] = [];
     page.on("request", (req) => requestsAfterSelection.push(req.url()));

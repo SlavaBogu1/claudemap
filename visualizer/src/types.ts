@@ -40,17 +40,45 @@ export const LAYOUT_OPTIONS: { value: LayoutName; label: string }[] = [
 export const DEFAULT_LAYOUT: LayoutName = "cose";
 
 // CR-UI-10 (Sprint 3): sort order applied to `sessions` before they're mapped to graph nodes —
-// orthogonal to `LayoutName` (a user can pick both independently).
-export type SortName = "date-desc" | "date-asc" | "agents-desc" | "agents-asc";
+// orthogonal to `LayoutName` (a user can pick both independently). CR-UI-35 (Sprint 6): extended
+// with 3 more desc/asc metric pairs (Memory/Tools/Message count), purely additive.
+export type SortName =
+  | "date-desc"
+  | "date-asc"
+  | "agents-desc"
+  | "agents-asc"
+  | "memory-desc"
+  | "memory-asc"
+  | "tools-desc"
+  | "tools-asc"
+  | "messages-desc"
+  | "messages-asc";
 
 export const SORT_OPTIONS: { value: SortName; label: string }[] = [
   { value: "date-desc", label: "Date (newest first)" },
   { value: "date-asc", label: "Date (oldest first)" },
   { value: "agents-desc", label: "Agent count (most first)" },
   { value: "agents-asc", label: "Agent count (fewest first)" },
+  { value: "memory-desc", label: "Memory count (most first)" },
+  { value: "memory-asc", label: "Memory count (fewest first)" },
+  { value: "tools-desc", label: "Tools count (most first)" },
+  { value: "tools-asc", label: "Tools count (fewest first)" },
+  { value: "messages-desc", label: "Message count (most first)" },
+  { value: "messages-asc", label: "Message count (fewest first)" },
 ];
 
 export const DEFAULT_SORT: SortName = "date-desc";
+
+// CR-UI-27 (Sprint 6): client-side session filter applied before sort/layout — orthogonal to both.
+export type TimeRangeName = "week" | "month" | "all";
+
+export const TIME_RANGE_OPTIONS: { value: TimeRangeName; label: string }[] = [
+  { value: "week", label: "Week" },
+  { value: "month", label: "Month" },
+  { value: "all", label: "All" },
+];
+
+export const DEFAULT_TIME_RANGE: TimeRangeName = "all";
 
 // CR-UI-06 (Sprint 2): documented Indexer v1.3 addition, session-substructure drill-down.
 // See _API_CONTRACT/CONTRACT.md GET /api/projects/:id/sessions/:sessionId/detail.
@@ -75,6 +103,22 @@ export interface NoteEntry {
   nodeId: string;
   content: string;
   format: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// CR-CORE-03 (Sprint 6): documented Indexer v1.9 addition. See _API_CONTRACT/CONTRACT.md §
+// Claude-map notes / GET /api/projects/:id/claude-map-notes. Ingest-written, read-only aggregated
+// notes parsed from `[claude-map] <text>` transcript markers — always `nodeType: "session"`, never
+// user-editable via the API (no PUT/DELETE), and stored entirely separately from `NoteEntry` above
+// (a distinct `claude_map_notes` table that never collides with the user-editable `notes` table).
+// Note there is no `format` field here (unlike `NoteEntry`) — this content is always plain
+// concatenated marker text, never a user-chosen format.
+export interface ClaudeMapNoteEntry {
+  projectId: string;
+  nodeType: NodeType;
+  nodeId: string;
+  content: string;
   createdAt: string;
   updatedAt: string;
 }

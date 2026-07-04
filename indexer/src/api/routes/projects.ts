@@ -17,7 +17,14 @@ import {
   toolResultFileExists
 } from "../../db/indexDb.js";
 import type { AnnotationsDb } from "../../db/annotationsDb.js";
-import { addScanRoot, deleteNote, listNotes, listScanRoots, upsertNote } from "../../db/annotationsDb.js";
+import {
+  addScanRoot,
+  deleteNote,
+  listClaudeMapNotes,
+  listNotes,
+  listScanRoots,
+  upsertNote
+} from "../../db/annotationsDb.js";
 import { resolveProjectsRoot } from "../../discovery/scanRoots.js";
 import { rescan } from "../../discovery/rescan.js";
 import { parseSessionContent } from "../../parsing/sessionContent.js";
@@ -78,13 +85,22 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   const router = Router();
   const { indexDb, logger } = options;
 
+  /**
+   * Every GET (and the mutating POST/PUT/DELETE routes below) triggers this incremental rescan
+   * first (D13). Passing `annotationsDb` lets the rescan persist/replace each re-parsed session's
+   * `claude_map_notes` row (CR-CORE-03) alongside the existing index.db bookkeeping.
+   */
+  function doRescan(projectsRoots: string[] = resolveAllKnownRoots(options)): void {
+    rescan({ db: indexDb, projectsRoots, annotationsDb: options.annotationsDb, logger });
+  }
+
   router.get("/", (_req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     res.json(listProjects(indexDb));
   });
 
   router.get("/:id/sessions", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -94,7 +110,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   });
 
   router.get("/:id/sessions/:sessionId/detail", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id, sessionId } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -123,12 +139,12 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
     }
 
     addScanRoot(options.annotationsDb, browsedPath);
-    rescan({ db: indexDb, projectsRoots: [resolvedRoot], logger });
+    doRescan([resolvedRoot]);
     res.json(listProjectsByRoot(indexDb, resolvedRoot));
   });
 
   router.post("/:id/open-folder", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -140,7 +156,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   });
 
   router.get("/:id/sessions/:sessionId/content", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id, sessionId } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -156,7 +172,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   });
 
   router.get("/:id/memory-content", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -194,7 +210,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   // case a subagent record's file_path resolved to its meta.json instead (no separate transcript
   // found on disk at index time) — same response shape either way.
   router.get("/:id/agent-content", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -245,7 +261,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   // (v1.6, CR-UI-15) Tool-output content — mirrors memory-content's pattern exactly (raw text,
   // path validated against a known tool_result_overflows.file_path for this project first).
   router.get("/:id/tool-content", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -282,7 +298,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   // path (getProjectPath), already validated at discovery time — not a user-supplied path, so a
   // plain fs.existsSync/readFileSync is safe here (same reasoning as open-folder's target path).
   router.get("/:id/content", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -318,7 +334,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   });
 
   router.get("/:id/notes", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -327,8 +343,20 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
     res.json(listNotes(options.annotationsDb, id));
   });
 
+  // (v1.9, CR-CORE-03) Read-only — claude-map notes have no user-edit path, so unlike /notes there's
+  // no PUT/DELETE here; write access happens only during doRescan()'s ingest pass above.
+  router.get("/:id/claude-map-notes", (req, res) => {
+    doRescan();
+    const { id } = req.params;
+    if (!projectExists(indexDb, id)) {
+      res.status(404).json({ error: `Unknown project id: ${id}` });
+      return;
+    }
+    res.json(listClaudeMapNotes(options.annotationsDb, id));
+  });
+
   router.put("/:id/notes/:nodeType/:nodeId", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id, nodeType, nodeId } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
@@ -349,7 +377,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   });
 
   router.delete("/:id/notes/:nodeType/:nodeId", (req, res) => {
-    rescan({ db: indexDb, projectsRoots: resolveAllKnownRoots(options), logger });
+    doRescan();
     const { id, nodeType, nodeId } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });

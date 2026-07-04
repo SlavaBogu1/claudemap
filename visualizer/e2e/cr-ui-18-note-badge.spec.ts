@@ -185,11 +185,14 @@ test.describe("CR-UI-18 — note corner badge", () => {
     function expectBadgeAtNodesBottomRightCorner(result: Awaited<ReturnType<typeof nodeAndBadgeCanvasRelativePositions>>) {
       // The badge sits toward the node's bottom-right corner: strictly right of and below the
       // node's own center, but not absurdly far away (the node's rendered size, which the badge's
-      // offset scales with, stays well under 150px even zoomed in).
+      // offset scales with, stays well under 200px even zoomed in). CR-UI-32 (Sprint 6) bumped
+      // session node height 70 -> 82 for the label's new 3rd line, so the margin here was widened
+      // from 150 to 200 to comfortably re-accommodate that (still catches a genuinely broken
+      // far-away badge, just no longer flags this legitimate, intentional size increase).
       expect(result.badgeCenter.x).toBeGreaterThan(result.nodePos.x);
       expect(result.badgeCenter.y).toBeGreaterThan(result.nodePos.y);
-      expect(result.badgeCenter.x - result.nodePos.x).toBeLessThan(150);
-      expect(result.badgeCenter.y - result.nodePos.y).toBeLessThan(150);
+      expect(result.badgeCenter.x - result.nodePos.x).toBeLessThan(200);
+      expect(result.badgeCenter.y - result.nodePos.y).toBeLessThan(200);
     }
 
     const before = await nodeAndBadgeCanvasRelativePositions();

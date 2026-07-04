@@ -96,7 +96,11 @@ test.describe("CR-UI-10 — session sort control", () => {
 
     await page.goto("/");
     await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
-    expect(handle.sessionsRequestCount["sudoku"]).toBe(1);
+    // Polled rather than a bare synchronous read: the sessions fetch is fired from a React effect
+    // after selectOption's promise resolves, so under heavier parallel-worker load the request may
+    // not have landed yet at this exact tick (same hardening already applied in
+    // cr-ui-05-timeline.spec.ts's "switching to/from Timeline" test).
+    await expect.poll(() => handle.sessionsRequestCount["sudoku"]).toBe(1);
 
     // CR-UI-23: the header Sort control is only interactive in Hierarchical mode.
     await page.getByLabel("Layout").selectOption("breadthfirst");

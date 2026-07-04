@@ -1,11 +1,23 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { LayoutName, NodeType, NoteEntry, Project, SelectedGraphItem, Session, SortName } from "./types";
-import { fetchProjects, fetchSessions, fetchNotes, ApiError } from "./api/client";
+import type {
+  ClaudeMapNoteEntry,
+  LayoutName,
+  NodeType,
+  NoteEntry,
+  Project,
+  SelectedGraphItem,
+  Session,
+  SortName,
+  TimeRangeName,
+} from "./types";
+import { fetchProjects, fetchSessions, fetchNotes, fetchClaudeMapNotes, ApiError } from "./api/client";
 import {
   getPreferredLayout,
   setPreferredLayout,
   getPreferredSort,
   setPreferredSort,
+  getPreferredTimeRange,
+  setPreferredTimeRange,
   getPreferredDetailPanelWidth,
   setPreferredDetailPanelWidth,
   clampDetailPanelWidth,
@@ -13,11 +25,16 @@ import {
   setShowBanners,
   getPreferredTheme,
   setPreferredTheme,
+  getPreferredSessionColorScheme,
+  setPreferredSessionColorScheme,
+  type SessionColorScheme,
   type ThemeName,
 } from "./lib/preferences";
+import { filterSessionsByTimeRange } from "./lib/timeRange";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { LayoutSwitcher } from "./components/LayoutSwitcher";
 import { SortSwitcher } from "./components/SortSwitcher";
+import { TimeRangeSwitcher } from "./components/TimeRangeSwitcher";
 import { BurgerMenu } from "./components/BurgerMenu";
 import { GraphCanvas } from "./components/GraphCanvas";
 import { DetailPanel } from "./components/DetailPanel";
@@ -30,10 +47,16 @@ function App() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [layout, setLayout] = useState<LayoutName>(() => getPreferredLayout());
   const [sort, setSort] = useState<SortName>(() => getPreferredSort());
+  // CR-UI-27 (D23): time-range filter — header control + bidirectionally-synced Preferences field.
+  const [timeRange, setTimeRangeState] = useState<TimeRangeName>(() => getPreferredTimeRange());
   // CR-UI-07 (D23): banner-row visibility — Preferences-only control (no header quick shortcut).
   const [showBanners, setShowBannersState] = useState<boolean>(() => getShowBanners());
   // CR-UI-24 (D23): Light/Dark/System theme — Preferences-only control (no header quick shortcut).
   const [theme, setThemeState] = useState<ThemeName>(() => getPreferredTheme());
+  // CR-UI-33 (D23): "Session color scheme" — Preferences-only control (no header quick shortcut).
+  const [sessionColorScheme, setSessionColorSchemeState] = useState<SessionColorScheme>(() =>
+    getPreferredSessionColorScheme(),
+  );
   const [loadError, setLoadError] = useState<string | null>(null);
 
   // CR-UI-24: apply the theme by setting `document.documentElement.dataset.theme` to "light"/
@@ -59,9 +82,18 @@ function App() {
   // alongside sessions, so the 📝 indicator renders without a per-node request).
   const [selectedItem, setSelectedItem] = useState<SelectedGraphItem | null>(null);
   const [notes, setNotes] = useState<NoteEntry[]>([]);
+  // CR-CORE-03 (Sprint 6): ingest-written, read-only "claude-map" notes — fetched alongside the
+  // user-editable `notes` above, unioned into `notedKeys` below so a session shows one badge for
+  // either kind of note, but kept in a separate array/state throughout (never merged into `notes`
+  // itself) since the two are stored/edited entirely separately.
+  const [claudeMapNotes, setClaudeMapNotes] = useState<ClaudeMapNoteEntry[]>([]);
   const notedKeys = useMemo(
-    () => new Set(notes.map((n) => `${n.nodeType}:${n.nodeId}`)),
-    [notes],
+    () =>
+      new Set([
+        ...notes.map((n) => `${n.nodeType}:${n.nodeId}`),
+        ...claudeMapNotes.map((n) => `${n.nodeType}:${n.nodeId}`),
+      ]),
+    [notes, claudeMapNotes],
   );
 
   // Load the project list once on mount.
@@ -80,6 +112,7 @@ function App() {
       setSelectedSessionId(null);
       setSelectedItem(null);
       setNotes([]);
+      setClaudeMapNotes([]);
       return;
     }
     setSelectedSessionId(null);
@@ -95,10 +128,25 @@ function App() {
     fetchNotes(selectedProjectId)
       .then((n) => setNotes(n))
       .catch(() => setNotes([]));
+    // CR-CORE-03: same once-per-project, best-effort fetch pattern as the user notes above.
+    fetchClaudeMapNotes(selectedProjectId)
+      .then((n) => setClaudeMapNotes(n))
+      .catch(() => setClaudeMapNotes([]));
   }, [selectedProjectId]);
 
   const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
+  // CR-UI-27: selection lookup stays against the full unfiltered `sessions` — switching time range
+  // never force-clears an existing selection, even if the selected session falls outside the newly
+  // chosen range (it just temporarily isn't rendered as a node).
   const selectedSession = sessions.find((s) => s.id === selectedSessionId) ?? null;
+
+  // CR-UI-27: applied before sort/layout (GraphCanvas's own `sortSessions` runs on whatever
+  // `sessions` array it's given) — Timeline's date-axis normalization and Hierarchical's Sort order
+  // both naturally rescale to just the filtered set as a result, with no separate wiring needed.
+  const filteredSessions = useMemo(
+    () => filterSessionsByTimeRange(sessions, timeRange),
+    [sessions, timeRange],
+  );
 
   function handleProjectsAdded(added: Project[]) {
     setProjects((prev) => {
@@ -123,6 +171,13 @@ function App() {
     setSort(next);
   }
 
+  // CR-UI-27: header TimeRangeSwitcher and Preferences' "Default time range" field are two controls
+  // over the same underlying preference — changing either updates both (D23), same pattern as sort.
+  function handleTimeRangeChange(next: TimeRangeName) {
+    setPreferredTimeRange(next);
+    setTimeRangeState(next);
+  }
+
   function handleShowBannersChange(next: boolean) {
     setShowBanners(next);
     setShowBannersState(next);
@@ -131,6 +186,11 @@ function App() {
   function handleThemeChange(next: ThemeName) {
     setPreferredTheme(next);
     setThemeState(next);
+  }
+
+  function handleSessionColorSchemeChange(next: SessionColorScheme) {
+    setPreferredSessionColorScheme(next);
+    setSessionColorSchemeState(next);
   }
 
   // CR-UI-08: applied optimistically from the Content tab's Save/Delete so the 📝 indicator and any
@@ -209,15 +269,21 @@ function App() {
             The Preferences panel's "Default sort" field is a separate control and stays always
             editable regardless of the current layout (see PreferencesPanel below). */}
         <SortSwitcher sort={sort} onChange={handleSortChange} disabled={layout !== "breadthfirst"} />
+        {/* CR-UI-27: positioned immediately after Sort, per the user's exact placement request. */}
+        <TimeRangeSwitcher timeRange={timeRange} onChange={handleTimeRangeChange} />
         <BurgerMenu
           preferredLayout={layout}
           onPreferredLayoutChange={handlePreferredLayoutChange}
           preferredSort={sort}
           onPreferredSortChange={handleSortChange}
+          preferredTimeRange={timeRange}
+          onPreferredTimeRangeChange={handleTimeRangeChange}
           showBanners={showBanners}
           onShowBannersChange={handleShowBannersChange}
           theme={theme}
           onThemeChange={handleThemeChange}
+          sessionColorScheme={sessionColorScheme}
+          onSessionColorSchemeChange={handleSessionColorSchemeChange}
         />
       </header>
 
@@ -226,18 +292,29 @@ function App() {
       <main className="app-main">
         <div className="canvas-area">
           {selectedProject ? (
-            <GraphCanvas
-              project={selectedProject}
-              sessions={sessions}
-              layout={layout}
-              sort={sort}
-              selectedSessionId={selectedSessionId}
-              onSelectSession={setSelectedSessionId}
-              showBanners={showBanners}
-              onSelectItem={setSelectedItem}
-              notedKeys={notedKeys}
-              theme={theme}
-            />
+            <>
+              <GraphCanvas
+                project={selectedProject}
+                sessions={filteredSessions}
+                layout={layout}
+                sort={sort}
+                selectedSessionId={selectedSessionId}
+                onSelectSession={setSelectedSessionId}
+                showBanners={showBanners}
+                onSelectItem={setSelectedItem}
+                notedKeys={notedKeys}
+                theme={theme}
+                sessionColorScheme={sessionColorScheme}
+              />
+              {/* CR-UI-27: the project itself has real sessions, but none fall in the selected
+                  time range — show a clear hint rather than a confusing, seemingly-empty canvas
+                  (the project node alone still renders). */}
+              {sessions.length > 0 && filteredSessions.length === 0 && (
+                <p className="hint centered" data-testid="time-range-empty-hint">
+                  No sessions in the selected time range.
+                </p>
+              )}
+            </>
           ) : (
             <p className="hint centered">Select a project to view its session graph.</p>
           )}
@@ -259,6 +336,7 @@ function App() {
               width={detailPanelWidth}
               selectedItem={selectedItem}
               notes={notes}
+              claudeMapNotes={claudeMapNotes}
               onNoteSaved={handleNoteSaved}
               onNoteDeleted={handleNoteDeleted}
             />

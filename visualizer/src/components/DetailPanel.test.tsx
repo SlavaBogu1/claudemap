@@ -8,10 +8,11 @@ import * as apiClient from "../api/client";
 // need to know about the Content tab's data plumbing.
 const noopDetailPanelProps: Pick<
   DetailPanelProps,
-  "selectedItem" | "notes" | "onNoteSaved" | "onNoteDeleted"
+  "selectedItem" | "notes" | "claudeMapNotes" | "onNoteSaved" | "onNoteDeleted"
 > = {
   selectedItem: null,
   notes: [],
+  claudeMapNotes: [],
   onNoteSaved: () => {},
   onNoteDeleted: () => {},
 };
@@ -149,6 +150,7 @@ describe("DetailPanel", () => {
               updatedAt: "2026-07-01T00:00:00Z",
             },
           ]}
+          claudeMapNotes={[]}
           onNoteSaved={() => {}}
           onNoteDeleted={() => {}}
         />,

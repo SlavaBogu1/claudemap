@@ -203,7 +203,8 @@
 
 .project-picker,
 .layout-switcher,
-.sort-switcher {
+.sort-switcher,
+.time-range-switcher {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -234,6 +235,11 @@
   font-size: 20px;
   line-height: 1;
   padding: 4px 8px;
+  /* CR-UI-30: without this, the <button> falls back to the browser's default (near-black) button
+     text color instead of inheriting the page's theme-aware --text-h — nearly invisible against
+     Dark theme's near-black header background. Matches `.burger-dropdown li button`'s existing
+     identical fix (below). */
+  color: inherit;
 }
 
 .burger-dropdown {
@@ -377,6 +383,26 @@
   color: var(--text);
 }
 
+/* CR-CORE-03: view-only "claude-map" note section — visually distinct (left accent border, no
+   editable control) from the editable user-note area below it. */
+.claude-map-note {
+  margin-top: 16px;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 0 4px 4px 0;
+}
+
+.claude-map-note h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.claude-map-note-content {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
 .note-editor {
   margin-top: 16px;
 }
@@ -392,10 +418,84 @@
   font-family: inherit;
   font-size: inherit;
   resize: vertical;
+  /* CR-UI-34: without these, the <textarea> falls back to the browser's default white
+     background/black text regardless of the active theme — the same form-control-doesn't-inherit
+     gotcha CR-UI-30 fixed for .burger-icon. */
+  background: var(--bg);
+  color: var(--text-h);
+  border: 1px solid var(--border);
+}
+
+/* CR-UI-19: rendered Markdown view of a saved note — real formatted output (bold/italic/links/
+   lists/headings/code), replacing the raw-source textarea while not editing. */
+.note-view {
+  padding: 8px;
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 4px;
+}
+
+.note-view :first-child {
+  margin-top: 0;
+}
+
+.note-view :last-child {
+  margin-bottom: 0;
+}
+
+.note-view pre,
+.note-view code {
+  font-family: var(--mono);
+}
+
+.note-view a {
+  color: var(--accent);
 }
 
 .note-actions {
   display: flex;
   justify-content: space-between;
   margin-top: 6px;
+}
+
+/* CR-UI-20: Help panel — each syntax example shown as raw source next to its live-rendered result. */
+.help-examples {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0;
+}
+
+.help-example h3 {
+  margin: 0 0 4px;
+  font-size: 13px;
+}
+
+.help-example-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.help-example-source,
+.help-example-rendered {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(128, 128, 128, 0.1);
+}
+
+.help-example-source {
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  margin: 0;
+}
+
+.help-example-rendered :first-child {
+  margin-top: 0;
+}
+
+.help-example-rendered :last-child {
+  margin-bottom: 0;
 }

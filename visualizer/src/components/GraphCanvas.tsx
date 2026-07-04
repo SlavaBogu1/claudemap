@@ -13,14 +13,18 @@ import {
   type SortName,
 } from "../types";
 import { fetchSessionDetail } from "../api/client";
-import type { ThemeName } from "../lib/preferences";
+import type { SessionColorScheme, ThemeName } from "../lib/preferences";
 
 // CR-UI-05 (Sprint 2): virtual coordinate space for the "timeline" preset layout. Cytoscape's
 // preset layout fits these into the real viewport (fit: true), so the absolute numbers here only
 // need to be internally consistent, not match real pixel dimensions.
 const TIMELINE_WIDTH = 1000;
 const TIMELINE_SESSION_Y = 200;
-const TIMELINE_Y_JITTER = 22; // per-session vertical nudge when startedAt values collide on x
+// CR-UI-29 (Sprint 6): cascade-stack step sizes for same-day sessions — replaces the old flat
+// TIMELINE_Y_JITTER same-day collision handling. Each successive same-day session (chronological
+// order) gets +1 step X, +1 step Y versus the previous one; uncapped (no reset/wrap at any count).
+const TIMELINE_CASCADE_X_STEP = 18;
+const TIMELINE_CASCADE_Y_STEP = 18;
 const TIMELINE_CHILD_Y_OFFSET = 140; // CR-UI-06 child nodes rendered below their session (preset only)
 // CR-UI-09: radial-cluster sizing for a session's drill-down children under the timeline preset.
 const CHILD_CLUSTER_MIN_RADIUS = 60; // px — keeps 1-2 children clearly separated at any count
@@ -34,7 +38,9 @@ const CHILD_ROW_NODE_SPACING = 70; // px — horizontal spacing between siblings
 // corner rather than floating fully outside its shape.
 const NOTE_BADGE_INWARD_OFFSET = 5;
 
-function formatSessionLabel(startedAt: string): string {
+// CR-UI-32 (Sprint 6): a 3rd label line showing the session's message count, so it's visible at a
+// glance on the graph itself without opening the Detail panel.
+function formatSessionLabel(startedAt: string, messageCount: number): string {
   const d = new Date(startedAt);
   if (Number.isNaN(d.getTime())) return startedAt;
   const datePart = d.toLocaleDateString(undefined, {
@@ -45,7 +51,7 @@ function formatSessionLabel(startedAt: string): string {
     hour: "numeric",
     minute: "2-digit",
   });
-  return `${datePart}\n${timePart}`;
+  return `${datePart}\n${timePart}\n${messageCount}`;
 }
 
 // CR-UI-09: given a parent session's timeline position and the ids of its currently-expanded
@@ -106,17 +112,43 @@ export function computeChildRowPositions(
   return positions;
 }
 
+// CR-UI-29 (reopened 2026-07-04 regression fix): calendar-day grouping key for the cascade-stack,
+// from the *viewer's local* calendar day — must match the time reference `formatSessionLabel` (above)
+// actually displays via toLocaleDateString/toLocaleTimeString. The original implementation grouped by
+// the UTC date part of `startedAt` (`d.toISOString().slice(0, 10)`), which silently diverges from the
+// displayed local day near a UTC day boundary: for a viewer in a negative-enough UTC-offset timezone
+// (e.g. US timezones), a late-evening local session can fall on the *next* UTC calendar day while an
+// afternoon session the same local day does not, splitting two sessions the user sees as "the same
+// day" into two different cascade groups (each then rendered as its own day's lone/first session, at
+// the shared baseline Y with no offset between them — the reported regression). Using local-timezone
+// accessors (getFullYear/getMonth/getDate) instead keeps this key aligned with the label the user
+// actually sees.
+function calendarDayKey(startedAt: string): string {
+  const d = new Date(startedAt);
+  if (Number.isNaN(d.getTime())) return "invalid";
+  return `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+}
+
+export interface TimelineLayoutResult {
+  positions: Record<string, { x: number; y: number }>;
+  // CR-UI-29: per-session cascade Z-index (1-based, strictly increasing within a day in
+  // chronological order) — consumed by the component to set Cytoscape's real `zIndex` node style.
+  zIndex: Record<string, number>;
+}
+
 // CR-UI-05: maps each session's startedAt linearly across [0, TIMELINE_WIDTH] (earliest -> left
-// edge, latest -> right edge). Sessions that round to the same x get a small y jitter so two
-// sessions sharing a timestamp don't perfectly overlap. Project node gets a fixed centered spot.
-function computeTimelinePositions(
-  project: Project,
-  sessions: Session[],
-): Record<string, { x: number; y: number }> {
+// edge, latest -> right edge) — unchanged calculation basis. CR-UI-29 (Sprint 6): replaced the old
+// flat same-timestamp Y-jitter with a day-baseline cascade-stack — sessions are grouped by calendar
+// day, each day's chronologically-earliest session sits at the shared TIMELINE_SESSION_Y baseline,
+// and each subsequent same-day session cascades by one more X/Y step (down-and-right) with one more
+// Z-index level, uncapped. Day-to-day separation still comes purely from X (time), unchanged.
+// Project node gets a fixed centered spot.
+export function computeTimelinePositions(project: Project, sessions: Session[]): TimelineLayoutResult {
   const positions: Record<string, { x: number; y: number }> = {
     [`project:${project.id}`]: { x: TIMELINE_WIDTH / 2, y: 0 },
   };
-  if (sessions.length === 0) return positions;
+  const zIndex: Record<string, number> = {};
+  if (sessions.length === 0) return { positions, zIndex };
 
   const times = sessions.map((s) => new Date(s.startedAt).getTime());
   const validTimes = times.filter((t) => !Number.isNaN(t));
@@ -124,18 +156,33 @@ function computeTimelinePositions(
   const maxT = validTimes.length > 0 ? Math.max(...validTimes) : 0;
   const span = maxT - minT;
 
-  const occurrencesAtX = new Map<number, number>();
-  sessions.forEach((s, i) => {
-    const t = times[i];
-    const x =
-      span === 0 || Number.isNaN(t) ? TIMELINE_WIDTH / 2 : ((t - minT) / span) * TIMELINE_WIDTH;
-    const xKey = Math.round(x);
-    const occurrence = occurrencesAtX.get(xKey) ?? 0;
-    occurrencesAtX.set(xKey, occurrence + 1);
-    positions[s.id] = { x, y: TIMELINE_SESSION_Y + occurrence * TIMELINE_Y_JITTER };
+  function baseX(t: number): number {
+    return span === 0 || Number.isNaN(t) ? TIMELINE_WIDTH / 2 : ((t - minT) / span) * TIMELINE_WIDTH;
+  }
+
+  const byDay = new Map<string, Session[]>();
+  sessions.forEach((s) => {
+    const key = calendarDayKey(s.startedAt);
+    const list = byDay.get(key);
+    if (list) list.push(s);
+    else byDay.set(key, [s]);
   });
 
-  return positions;
+  for (const daySessions of byDay.values()) {
+    const ordered = daySessions
+      .slice()
+      .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime());
+    ordered.forEach((s, cascadeIndex) => {
+      const t = new Date(s.startedAt).getTime();
+      positions[s.id] = {
+        x: baseX(t) + cascadeIndex * TIMELINE_CASCADE_X_STEP,
+        y: TIMELINE_SESSION_Y + cascadeIndex * TIMELINE_CASCADE_Y_STEP,
+      };
+      zIndex[s.id] = cascadeIndex + 1;
+    });
+  }
+
+  return { positions, zIndex };
 }
 
 function layoutOptionsFor(
@@ -170,7 +217,7 @@ function layoutOptionsFor(
     } as LayoutOptions;
   }
   if (name === "timeline") {
-    const positions = computeTimelinePositions(project, sessions);
+    const { positions } = computeTimelinePositions(project, sessions);
     // CR-UI-09: cache of childId -> position, built once per layout call (not once per node) the
     // first time any child node is resolved during this run, from the full sibling group present
     // in Cytoscape at that moment — grouping per parent to avoid O(n^2) rework across many children.
@@ -269,6 +316,11 @@ interface CanvasPalette {
   toolText: string;
   selectedBorder: string;
   edgeLine: string;
+  // CR-UI-33 (Sprint 6): red->green gradient endpoints for the "Session color scheme" preference —
+  // deliberately distinct per theme (not shared constants) so the same metric/normalized value
+  // renders different actual colors under Light vs Dark, per the user's explicit requirement.
+  gradientLow: string;
+  gradientHigh: string;
 }
 
 const LIGHT_PALETTE: CanvasPalette = {
@@ -285,6 +337,8 @@ const LIGHT_PALETTE: CanvasPalette = {
   toolText: "#08060d",
   selectedBorder: "#aa3bff",
   edgeLine: "#c9c7cf",
+  gradientLow: "#d64545",
+  gradientHigh: "#2e9e44",
 };
 
 const DARK_PALETTE: CanvasPalette = {
@@ -301,9 +355,68 @@ const DARK_PALETTE: CanvasPalette = {
   toolText: "#16171d",
   selectedBorder: "#c084fc",
   edgeLine: "#565a68",
+  gradientLow: "#ef5350",
+  gradientHigh: "#4caf50",
 };
 
-function buildStylesheet(palette: CanvasPalette): cytoscape.StylesheetJson {
+// CR-UI-33: red->green gradient math for the "Session color scheme" preference — pure functions,
+// exported for unit testing without mounting Cytoscape.
+
+export function hexToRgb(hex: string): [number, number, number] {
+  const clean = hex.replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const num = parseInt(full, 16);
+  return [(num >> 16) & 255, (num >> 8) & 255, num & 255];
+}
+
+export function interpolateColor(lowHex: string, highHex: string, t: number): string {
+  const clamped = Math.max(0, Math.min(1, t));
+  const low = hexToRgb(lowHex);
+  const high = hexToRgb(highHex);
+  const r = Math.round(low[0] + (high[0] - low[0]) * clamped);
+  const g = Math.round(low[1] + (high[1] - low[1]) * clamped);
+  const b = Math.round(low[2] + (high[2] - low[2]) * clamped);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function sessionMetricValue(scheme: SessionColorScheme, session: Session): number {
+  switch (scheme) {
+    case "sizeGrad":
+      return session.messageCount;
+    case "timeGrad":
+      return new Date(session.startedAt).getTime();
+    case "durationGrad":
+      return new Date(session.endedAt).getTime() - new Date(session.startedAt).getTime();
+    default:
+      return 0;
+  }
+}
+
+// CR-UI-33: normalized (0..1) position of `session`'s metric among `sessions` — the same
+// relative-normalization approach already used for Timeline's X-axis
+// (`computeTimelinePositions`'s `(t - minT) / span` pattern). Green (1) = high, red (0) = low,
+// consistently across all three metrics. When every session ties on the active metric (span 0),
+// there's no meaningful ordering — falls back to the gradient's midpoint rather than an arbitrary
+// all-green/all-red result.
+export function normalizedSessionMetric(
+  scheme: SessionColorScheme,
+  sessions: Session[],
+  session: Session,
+): number {
+  const values = sessions.map((s) => sessionMetricValue(scheme, s));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min;
+  if (span === 0) return 0.5;
+  return (sessionMetricValue(scheme, session) - min) / span;
+}
+
+function buildStylesheet(
+  palette: CanvasPalette,
+  scheme: SessionColorScheme,
+  sessions: Session[],
+): cytoscape.StylesheetJson {
+  const sessionsById = new Map(sessions.map((s) => [s.id, s]));
   return [
     {
       selector: "node",
@@ -335,6 +448,26 @@ function buildStylesheet(palette: CanvasPalette): cytoscape.StylesheetJson {
       selector: 'node[type = "session"]',
       style: {
         shape: "round-rectangle",
+        // CR-UI-32 (Sprint 6): the label grew from 2 to 3 lines (date, time, message count) — a
+        // small height bump (70 -> 82) keeps the 3rd line from visually crowding/overflowing past
+        // the node's bottom edge at the existing font-size 11; width is unchanged.
+        height: 82,
+        // CR-UI-33 (Sprint 6): when a non-default "Session color scheme" is active, recolor session
+        // backgrounds via a per-node function — normalized within the sessions currently rendered,
+        // interpolated between the active palette's gradientLow/gradientHigh. Scoped to
+        // `node[type = "session"]` only (not the generic `node` selector), so project/child nodes
+        // are never affected. Default scheme adds no override here, so sessions keep inheriting the
+        // flat `node` selector's `defaultBg` exactly as before this CR.
+        ...(scheme !== "default" && sessions.length > 0
+          ? {
+              "background-color": (node: NodeSingular) => {
+                const session = sessionsById.get(node.id());
+                if (!session) return palette.defaultBg;
+                const t = normalizedSessionMetric(scheme, sessions, session);
+                return interpolateColor(palette.gradientLow, palette.gradientHigh, t);
+              },
+            }
+          : {}),
       },
     },
     // CR-UI-06 (Sprint 2, D6-gated): drill-down child node types, each visually distinct (shape +
@@ -413,6 +546,9 @@ export interface GraphCanvasProps {
   // CR-UI-24: the user's Light/Dark/System theme preference — resolved to an actual light/dark
   // palette for the Cytoscape stylesheet below ("system" follows the OS preference).
   theme: ThemeName;
+  // CR-UI-33 (Sprint 6): "Session color scheme" preference — recolors session backgrounds by
+  // metric, normalized within the currently-displayed `sessions` (see `buildStylesheet`).
+  sessionColorScheme: SessionColorScheme;
 }
 
 // CR-UI-10: pure sort step, pulled out for unit testing. A plain `.slice().sort(...)` — no
@@ -428,6 +564,25 @@ export function sortSessions(sessions: Session[], sort: SortName): Session[] {
       break;
     case "agents-asc":
       sorted.sort((a, b) => a.subagentCount - b.subagentCount);
+      break;
+    // CR-UI-35 (Sprint 6): 3 more desc/asc metric pairs, same pattern as agents-desc/agents-asc.
+    case "memory-desc":
+      sorted.sort((a, b) => b.memoryTouchCount - a.memoryTouchCount);
+      break;
+    case "memory-asc":
+      sorted.sort((a, b) => a.memoryTouchCount - b.memoryTouchCount);
+      break;
+    case "tools-desc":
+      sorted.sort((a, b) => b.toolResultCount - a.toolResultCount);
+      break;
+    case "tools-asc":
+      sorted.sort((a, b) => a.toolResultCount - b.toolResultCount);
+      break;
+    case "messages-desc":
+      sorted.sort((a, b) => b.messageCount - a.messageCount);
+      break;
+    case "messages-asc":
+      sorted.sort((a, b) => a.messageCount - b.messageCount);
       break;
     case "date-desc":
     default:
@@ -461,7 +616,7 @@ export function buildGraphElements(
   const sessionNodes: ElementDefinition[] = sortedSessions.map((s) => ({
     data: {
       id: s.id,
-      label: formatSessionLabel(s.startedAt),
+      label: formatSessionLabel(s.startedAt, s.messageCount),
       type: "session",
       rawId: s.id,
     },
@@ -561,6 +716,7 @@ export function GraphCanvas({
   onSelectItem,
   notedKeys,
   theme,
+  sessionColorScheme,
 }: GraphCanvasProps) {
   const cyRef = useRef<Core | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -582,10 +738,12 @@ export function GraphCanvas({
   const resolvedDark = theme === "dark" || (theme === "system" && osPrefersDark);
   // CR-UI-24: rebuilt (new array reference) whenever the resolved theme changes — react-cytoscapejs
   // diffs the `stylesheet` prop and reapplies it to the live `cy` instance, since Cytoscape has no
-  // built-in way to pick up a CSS variable change on its own.
+  // built-in way to pick up a CSS variable change on its own. CR-UI-33: also rebuilt when the
+  // session color scheme or the underlying `sessions` change, since the gradient's per-node
+  // function closure needs fresh min/max normalization bounds each time either changes.
   const stylesheet = useMemo(
-    () => buildStylesheet(resolvedDark ? DARK_PALETTE : LIGHT_PALETTE),
-    [resolvedDark],
+    () => buildStylesheet(resolvedDark ? DARK_PALETTE : LIGHT_PALETTE, sessionColorScheme, sessions),
+    [resolvedDark, sessionColorScheme, sessions],
   );
   // Test/observability hook only (not part of the approved mockup, D6): reflects the app-level
   // LayoutName Cytoscape most recently finished running, so Playwright can assert layout switches
@@ -684,6 +842,14 @@ export function GraphCanvas({
   const baseElements: ElementDefinition[] = useMemo(
     () => buildGraphElements(project, sessions, sort),
     [project, sessions, sort],
+  );
+
+  // CR-UI-29 (Sprint 6): per-session cascade Z-index for the Timeline layout, applied as a real
+  // Cytoscape node style (not just a data field) after each layout run — see the `layoutstop`
+  // handler below. Empty outside Timeline, so no other layout's nodes are ever touched.
+  const timelineZIndex: Record<string, number> = useMemo(
+    () => (layout === "timeline" ? computeTimelinePositions(project, sessions).zIndex : {}),
+    [layout, project, sessions],
   );
 
   const elements: ElementDefinition[] = useMemo(() => {
@@ -919,8 +1085,78 @@ export function GraphCanvas({
     setExpandedTypes((prev) => new Map(prev).set(sessionId, new Set(ALL_DRILLDOWN_TYPES)));
   }
 
+  // CR-UI-31 (Sprint 6): Tab/Space keyboard navigation — a "roving tabindex" over
+  // [project, ...sessions in current render order] (the same order `buildGraphElements` already
+  // sorts sessions into, so it respects Sort in Hierarchical mode). `focusOrderRef` is recomputed
+  // whenever the order-determining inputs change; `focusIndex` is clamped (not reset) if the list
+  // shrinks, so an unrelated sessions refresh doesn't unexpectedly jump focus back to the project.
+  const focusOrderRef = useRef<string[]>([`project:${project.id}`]);
+  const [focusIndex, setFocusIndex] = useState(0);
+  useEffect(() => {
+    const order = [`project:${project.id}`, ...sortSessions(sessions, sort).map((s) => s.id)];
+    focusOrderRef.current = order;
+    setFocusIndex((prev) => Math.min(prev, order.length - 1));
+  }, [project.id, sessions, sort]);
+
+  // Distinguishes a mouse-driven focus (the wrapper becoming focused as a side effect of clicking a
+  // node inside it) from a genuine keyboard Tab-in from outside — only the latter should trigger
+  // `activateFocusIndex` below; a mouse click already drives selection via the `tap` handler, and
+  // re-driving it from `onFocus` too would fight the just-clicked node's own selection.
+  const mouseInteractionRef = useRef(false);
+
+  // Mirrors the `tap` handler's session/project selection branches (below) so Tab/Shift+Tab reuse
+  // the exact same select path and `.selected` highlight as a click — but deliberately never calls
+  // `toggleAllTypesForSession` (moving focus must not also expand/collapse a session).
+  function activateFocusIndex(index: number) {
+    const order = focusOrderRef.current;
+    if (index < 0 || index >= order.length) return;
+    setFocusIndex(index);
+    const id = order[index];
+    const cy = cyRef.current;
+    const label = (cy ? (cy.getElementById(id).data("label") as string | undefined) : undefined) ?? id;
+    if (index === 0) {
+      onSelectItem({ nodeType: "project", rawId: project.id, label });
+    } else {
+      onSelectSession(id);
+      onSelectItem({ nodeType: "session", rawId: id, label, sessionId: id });
+    }
+    if (cy) {
+      cy.nodes().removeClass("selected");
+      cy.getElementById(id).addClass("selected");
+    }
+  }
+
+  function handleCanvasKeyDown(e: React.KeyboardEvent<HTMLDivElement>) {
+    const order = focusOrderRef.current;
+    if (order.length === 0) return;
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const delta = e.shiftKey ? -1 : 1;
+      activateFocusIndex((focusIndex + delta + order.length) % order.length);
+    } else if (e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      if (focusIndex > 0) void toggleAllTypesForSession(order[focusIndex]);
+      // Space on the project node (focusIndex 0) is a no-op — no drill-down concept for it.
+    }
+  }
+
   return (
-    <div className="graph-canvas-wrapper" ref={wrapperRef}>
+    <div
+      className="graph-canvas-wrapper"
+      ref={wrapperRef}
+      tabIndex={0}
+      onMouseDown={() => {
+        mouseInteractionRef.current = true;
+      }}
+      onFocus={() => {
+        if (mouseInteractionRef.current) {
+          mouseInteractionRef.current = false;
+          return;
+        }
+        activateFocusIndex(focusIndex);
+      }}
+      onKeyDown={handleCanvasKeyDown}
+    >
       <CytoscapeComponent
         elements={elements}
         stylesheet={stylesheet}
@@ -974,6 +1210,15 @@ export function GraphCanvas({
           cy.off("layoutstop");
           cy.on("layoutstop", () => {
             setAppliedLayout(pendingLayoutRef.current);
+            // CR-UI-29: apply the cascade Z-index as a real Cytoscape node style after every
+            // Timeline layout run — `positions`-style preset layouts only set position, never
+            // style, so this can't be folded into `layoutOptionsFor` itself.
+            if (pendingLayoutRef.current === "timeline") {
+              cy.nodes('[type = "session"]').forEach((node: NodeSingular) => {
+                const z = timelineZIndex[node.id()];
+                if (z != null) node.style("z-index", z);
+              });
+            }
             recomputeOverlays(cy);
           });
           // CR-UI-07: keep the banner overlay glued to its session node across pans/zooms and
@@ -1004,8 +1249,12 @@ export function GraphCanvas({
                 data-session-id={s.id}
                 style={{ left: pos.x, top: pos.y }}
               >
+                {/* CR-UI-31: tabIndex={-1} removes these from the native Tab order (the roving
+                    tabindex above owns Tab/Shift+Tab over project/session nodes only) while
+                    leaving mouse-click behavior completely unchanged. */}
                 <button
                   type="button"
+                  tabIndex={-1}
                   className="session-banner session-banner-memory"
                   data-banner="memory"
                   aria-label={`Memory touches: ${s.memoryTouchCount}. Click to toggle.`}
@@ -1015,6 +1264,7 @@ export function GraphCanvas({
                 </button>
                 <button
                   type="button"
+                  tabIndex={-1}
                   className="session-banner session-banner-subagent"
                   data-banner="subagent"
                   aria-label={`Subagents: ${s.subagentCount}. Click to toggle.`}
@@ -1024,6 +1274,7 @@ export function GraphCanvas({
                 </button>
                 <button
                   type="button"
+                  tabIndex={-1}
                   className="session-banner session-banner-tool"
                   data-banner="tool"
                   aria-label={`Tool results: ${s.toolResultCount}. Click to toggle.`}

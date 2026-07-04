@@ -3,6 +3,7 @@ import {
   fetchProjects,
   fetchSessions,
   fetchSessionDetail,
+  fetchClaudeMapNotes,
   openFolder,
   browseProject,
   ApiError,
@@ -56,6 +57,23 @@ describe("api client", () => {
     const result = await fetchSessionDetail("p1", "s1");
     expect(globalThis.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects/p1/sessions/s1/detail`);
     expect(result).toEqual(detail);
+  });
+
+  it("fetchClaudeMapNotes calls GET /api/projects/:id/claude-map-notes (CR-CORE-03)", async () => {
+    const notes = [
+      {
+        projectId: "p1",
+        nodeType: "session",
+        nodeId: "s1",
+        content: "First tagged moment.",
+        createdAt: "2026-07-03T12:00:00Z",
+        updatedAt: "2026-07-03T12:00:00Z",
+      },
+    ];
+    mockFetchOnce(notes);
+    const result = await fetchClaudeMapNotes("p1");
+    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects/p1/claude-map-notes`);
+    expect(result).toEqual(notes);
   });
 
   it("openFolder POSTs to the open-folder endpoint", async () => {

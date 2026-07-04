@@ -14,10 +14,35 @@ export interface ParsedSession {
   touchedMemory: boolean;
   memoryTouches: string[];
   overflows: ToolResultOverflowRecord[];
+  /**
+   * (CR-CORE-03) Every `[claude-map] <text>` marker found in this session's user-turn messages, in
+   * transcript order — the caller (discovery/rescan.ts) concatenates these into a single aggregated
+   * claude_map_notes row for the session. Empty when the "claude-map" tagging skill was never
+   * invoked in this session.
+   */
+  claudeMapNotes: string[];
 }
 
 const COMMAND_TAG_RE = /<\/?(?:local-)?command-[a-z-]+>/gi;
 const PERSISTED_OUTPUT_RE = /Full output saved to:\s*([^\r\n]+)/i;
+/**
+ * (CR-CORE-03) The "claude-map" tagging skill posts a literal `[claude-map] <text>` message into a
+ * user turn. Matches once per occurrence within a message's text — `.` doesn't span newlines (no
+ * `s` flag), so multiple marker lines within one message are each captured separately.
+ */
+const CLAUDE_MAP_MARKER_RE = /\[claude-map\]\s*(.+)/gi;
+
+function extractClaudeMapMarkers(text: string | null): string[] {
+  if (!text) return [];
+  const matches: string[] = [];
+  const re = new RegExp(CLAUDE_MAP_MARKER_RE.source, CLAUDE_MAP_MARKER_RE.flags);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const captured = m[1].trim();
+    if (captured.length > 0) matches.push(captured);
+  }
+  return matches;
+}
 
 /**
  * Parse one top-level session `.jsonl` file. Malformed/partial lines are skipped and logged —
@@ -36,6 +61,7 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
   let touchedMemory = false;
   const memoryTouches = new Set<string>();
   const overflows: ToolResultOverflowRecord[] = [];
+  const claudeMapNotes: string[] = [];
 
   let firstUserText: string | null = null;
 
@@ -75,27 +101,41 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
       }
     }
 
-    if (entry.type === "user" && !entry.isMeta) {
-      if (Array.isArray(content)) {
-        for (const block of content) {
-          if (block?.type === "tool_result") {
-            const text = extractToolResultText(block.content);
-            const match = text?.match(PERSISTED_OUTPUT_RE);
-            if (match) {
-              overflows.push({
-                sessionId,
-                toolUseId: block.tool_use_id ?? block.toolUseId ?? null,
-                filePath: match[1].trim()
-              });
+    if (entry.type === "user") {
+      // (CR-CORE-03 fix) Marker extraction runs against every user-turn entry regardless of
+      // `isMeta` — a real slash-command/skill invocation lands its literal `[claude-map] <text>`
+      // marker text in a *separate*, `isMeta: true` entry immediately following the (marker-less)
+      // command envelope entry. Excluding `isMeta` here (as the code used to) meant a real
+      // invocation's marker could never be detected — see BACKLOG.md CR-CORE-03, 2026-07-04
+      // re-validation-failed note.
+      const userText = extractUserMessageText(content ?? entry.message?.content);
+
+      if (userText !== null) {
+        claudeMapNotes.push(...extractClaudeMapMarkers(userText));
+      }
+
+      if (!entry.isMeta) {
+        // Tool-result overflow detection and first-user-message/preview computation stay gated to
+        // non-`isMeta` entries — a slash-command envelope (or the isMeta body that follows it)
+        // should never become a session's preview text or be scanned for tool-result overflows.
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block?.type === "tool_result") {
+              const text = extractToolResultText(block.content);
+              const match = text?.match(PERSISTED_OUTPUT_RE);
+              if (match) {
+                overflows.push({
+                  sessionId,
+                  toolUseId: block.tool_use_id ?? block.toolUseId ?? null,
+                  filePath: match[1].trim()
+                });
+              }
             }
           }
         }
-      }
 
-      if (firstUserText === null) {
-        const candidate = extractUserMessageText(content ?? entry.message?.content);
-        if (candidate !== null) {
-          const stripped = candidate.replace(COMMAND_TAG_RE, "").trim();
+        if (firstUserText === null && userText !== null) {
+          const stripped = userText.replace(COMMAND_TAG_RE, "").trim();
           if (stripped.length > 0) firstUserText = stripped;
         }
       }
@@ -115,7 +155,8 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
     preview,
     touchedMemory,
     memoryTouches: Array.from(memoryTouches),
-    overflows
+    overflows,
+    claudeMapNotes
   };
 }
 

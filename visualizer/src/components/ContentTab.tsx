@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { SafeMarkdown } from "./SafeMarkdown";
 import type {
+  ClaudeMapNoteEntry,
   NodeType,
   NoteEntry,
   Project,
@@ -26,6 +28,9 @@ export interface ContentTabProps {
   project: Project;
   selectedItem: SelectedGraphItem | null;
   notes: NoteEntry[];
+  // CR-CORE-03: read-only, ingest-written "claude-map" notes — rendered in an additional, view-only
+  // section below, entirely separate from the editable user-note textarea/state above.
+  claudeMapNotes: ClaudeMapNoteEntry[];
   onNoteSaved: (note: NoteEntry) => void;
   onNoteDeleted: (nodeType: NodeType, nodeId: string) => void;
 }
@@ -122,11 +127,23 @@ function getSearchableTexts(content: ContentState): string[] {
   }
 }
 
-export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDeleted }: ContentTabProps) {
+export function ContentTab({
+  project,
+  selectedItem,
+  notes,
+  claudeMapNotes,
+  onNoteSaved,
+  onNoteDeleted,
+}: ContentTabProps) {
   const [content, setContent] = useState<ContentState>({ status: "none" });
   const [noteText, setNoteText] = useState("");
   const [noteSaving, setNoteSaving] = useState(false);
   const [noteError, setNoteError] = useState<string | null>(null);
+  // CR-UI-19: view mode (default when a saved note exists — renders the Markdown source as real
+  // formatted output) vs. edit mode (today's raw-source `<textarea>`). Kept in sync with
+  // `existingNote` below via the same effect that resets `noteText` on selection/content change, so
+  // Save (which updates `existingNote.content`) naturally flips back to view without extra wiring.
+  const [noteMode, setNoteMode] = useState<"view" | "edit">("edit");
 
   // CR-UI-17: search query + which match (in document order) is "current", for the Previous/Next
   // navigation and the distinct current-match highlight.
@@ -145,11 +162,25 @@ export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDe
     ? (notes.find((n) => n.nodeType === selectedItem.nodeType && n.nodeId === selectedItem.rawId) ?? null)
     : null;
 
+  // CR-CORE-03: claude-map notes are always keyed `nodeType: "session"` (no per-message anchor, no
+  // new node type — every `[claude-map]` tag in a session aggregates into one note on the session as
+  // a whole), so this only ever resolves for a "session" selection, never a sub-item/project one.
+  const claudeMapNote =
+    selectedItem && selectedItem.nodeType === "session"
+      ? (claudeMapNotes.find(
+          (n) => n.nodeType === selectedItem.nodeType && n.nodeId === selectedItem.rawId,
+        ) ?? null)
+      : null;
+
   // Reset the note editor's local draft whenever the selection (or its saved content) changes —
-  // an empty textarea if no note exists yet.
+  // an empty textarea if no note exists yet. CR-UI-19: also resets the view/edit mode here — a note
+  // with saved content opens in view mode (nothing to render for an empty one, so it opens directly
+  // in edit); this same dependency on `existingNote?.content` is what makes Save (which updates
+  // `existingNote.content` via `onNoteSaved`) naturally flip back to view mode without extra wiring.
   useEffect(() => {
     setNoteText(existingNote?.content ?? "");
     setNoteError(null);
+    setNoteMode(existingNote ? "view" : "edit");
   }, [selectedItem?.nodeType, selectedItem?.rawId, existingNote?.content]);
 
   // CR-UI-08 scope (user-confirmed): v1 covers Session (full transcript) and Memory touch (raw file
@@ -426,15 +457,35 @@ export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDe
           ))}
       </div>
 
+      {/* CR-CORE-03: view-only, ingest-written "claude-map" note — a separate, clearly-labeled
+          section from the editable user-note below (no edit/save/delete control reachable here;
+          this content has no client-facing write path at all, per the API contract). */}
+      {claudeMapNote && (
+        <div className="claude-map-note" data-testid="claude-map-note">
+          <h3>Claude-map notes</h3>
+          <p className="claude-map-note-content">{claudeMapNote.content}</p>
+        </div>
+      )}
+
       <div className="note-editor">
         <h3>Note</h3>
-        <textarea
-          aria-label="Note"
-          className="note-textarea"
-          value={noteText}
-          onChange={(e) => setNoteText(e.target.value)}
-          rows={6}
-        />
+        {/* CR-UI-19: view mode (default when a saved note exists) renders the Markdown source as
+            real formatted output — react-markdown's DEFAULT configuration only, no `rehype-raw`,
+            so any literal HTML in the source (e.g. a <script> tag) renders as inert text rather
+            than real DOM. This is a documented security invariant — do not add `rehype-raw`. */}
+        {noteMode === "view" && existingNote ? (
+          <div className="note-view" data-testid="note-view">
+            <SafeMarkdown>{existingNote.content}</SafeMarkdown>
+          </div>
+        ) : (
+          <textarea
+            aria-label="Note"
+            className="note-textarea"
+            value={noteText}
+            onChange={(e) => setNoteText(e.target.value)}
+            rows={6}
+          />
+        )}
         {noteError && <p className="error-text">{noteError}</p>}
         <div className="note-actions">
           {existingNote && (
@@ -442,9 +493,15 @@ export function ContentTab({ project, selectedItem, notes, onNoteSaved, onNoteDe
               Delete Note
             </button>
           )}
-          <button type="button" onClick={handleSaveNote} disabled={noteSaving}>
-            Save
-          </button>
+          {noteMode === "view" && existingNote ? (
+            <button type="button" onClick={() => setNoteMode("edit")}>
+              Edit
+            </button>
+          ) : (
+            <button type="button" onClick={handleSaveNote} disabled={noteSaving}>
+              Save
+            </button>
+          )}
         </div>
       </div>
     </div>

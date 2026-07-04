@@ -1,4 +1,11 @@
-import { DEFAULT_LAYOUT, DEFAULT_SORT, type LayoutName, type SortName } from "../types";
+import {
+  DEFAULT_LAYOUT,
+  DEFAULT_SORT,
+  DEFAULT_TIME_RANGE,
+  type LayoutName,
+  type SortName,
+  type TimeRangeName,
+} from "../types";
 
 const LAYOUT_PREF_KEY = "claudeMap.preferredLayout";
 
@@ -27,10 +34,22 @@ export function setPreferredLayout(layout: LayoutName): void {
 // CR-UI-10: sort order, orthogonal to (and persisted alongside) the layout preference.
 const SORT_PREF_KEY = "claudeMap.preferredSort";
 
+// CR-UI-35 (Sprint 6): extended alongside SortName with 3 more desc/asc metric pairs.
+const VALID_SORT_NAMES: readonly SortName[] = [
+  "date-desc",
+  "date-asc",
+  "agents-desc",
+  "agents-asc",
+  "memory-desc",
+  "memory-asc",
+  "tools-desc",
+  "tools-asc",
+  "messages-desc",
+  "messages-asc",
+];
+
 function isSortName(value: string | null): value is SortName {
-  return (
-    value === "date-desc" || value === "date-asc" || value === "agents-desc" || value === "agents-asc"
-  );
+  return VALID_SORT_NAMES.includes(value as SortName);
 }
 
 export function getPreferredSort(): SortName {
@@ -46,6 +65,33 @@ export function getPreferredSort(): SortName {
 export function setPreferredSort(sort: SortName): void {
   try {
     localStorage.setItem(SORT_PREF_KEY, sort);
+  } catch {
+    // ignore write failures
+  }
+}
+
+// CR-UI-27 (Sprint 6): time-range filter, orthogonal to (and persisted alongside) sort/layout. D23:
+// this also backs the Preferences "Default time range" field, bidirectionally synced with the
+// header control (same two-way pattern as CR-UI-10's sort).
+const TIME_RANGE_PREF_KEY = "claudeMap.preferredTimeRange";
+
+function isTimeRangeName(value: string | null): value is TimeRangeName {
+  return value === "week" || value === "month" || value === "all";
+}
+
+export function getPreferredTimeRange(): TimeRangeName {
+  try {
+    const stored = localStorage.getItem(TIME_RANGE_PREF_KEY);
+    if (isTimeRangeName(stored)) return stored;
+  } catch {
+    // localStorage unavailable (e.g. disabled) — fall back to default
+  }
+  return DEFAULT_TIME_RANGE;
+}
+
+export function setPreferredTimeRange(range: TimeRangeName): void {
+  try {
+    localStorage.setItem(TIME_RANGE_PREF_KEY, range);
   } catch {
     // ignore write failures
   }
@@ -146,6 +192,43 @@ export function getPreferredTheme(): ThemeName {
 export function setPreferredTheme(theme: ThemeName): void {
   try {
     localStorage.setItem(THEME_PREF_KEY, theme);
+  } catch {
+    // ignore write failures
+  }
+}
+
+// CR-UI-33 (Sprint 6): "Session color scheme" preference — recolors session node backgrounds along
+// a red->green gradient by one of three metrics, instead of today's flat gray. Mirrors ThemeName's
+// shape exactly. The *metric* is the user's choice here; the actual gradient *colors* follow the
+// active Light/Dark theme (see GraphCanvas.tsx's LIGHT_PALETTE/DARK_PALETTE gradientLow/gradientHigh).
+export type SessionColorScheme = "default" | "sizeGrad" | "timeGrad" | "durationGrad";
+
+export const SESSION_COLOR_SCHEME_OPTIONS: { value: SessionColorScheme; label: string }[] = [
+  { value: "default", label: "Default" },
+  { value: "sizeGrad", label: "Size Grad" },
+  { value: "timeGrad", label: "Time Grad" },
+  { value: "durationGrad", label: "Duration Grad" },
+];
+
+const SESSION_COLOR_SCHEME_PREF_KEY = "claudeMap.sessionColorScheme";
+
+function isSessionColorScheme(value: string | null): value is SessionColorScheme {
+  return value === "default" || value === "sizeGrad" || value === "timeGrad" || value === "durationGrad";
+}
+
+export function getPreferredSessionColorScheme(): SessionColorScheme {
+  try {
+    const stored = localStorage.getItem(SESSION_COLOR_SCHEME_PREF_KEY);
+    if (isSessionColorScheme(stored)) return stored;
+  } catch {
+    // localStorage unavailable (e.g. disabled) — fall back to default
+  }
+  return "default";
+}
+
+export function setPreferredSessionColorScheme(scheme: SessionColorScheme): void {
+  try {
+    localStorage.setItem(SESSION_COLOR_SCHEME_PREF_KEY, scheme);
   } catch {
     // ignore write failures
   }

@@ -1,9 +1,13 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
   buildGraphElements,
   buildChildElements,
   computeChildClusterPositions,
   computeChildRowPositions,
+  computeTimelinePositions,
+  hexToRgb,
+  interpolateColor,
+  normalizedSessionMetric,
   sortSessions,
 } from "./GraphCanvas";
 import type { Project, Session, SessionDetail } from "../types";
@@ -231,6 +235,257 @@ describe("computeChildRowPositions (CR-UI-16 Timeline per-type rows)", () => {
   });
 });
 
+describe("formatSessionLabel via buildGraphElements (CR-UI-32)", () => {
+  it("session node label has exactly 3 lines: date, time, then the message count", () => {
+    const sessions = makeSessions(1).map((s) => ({ ...s, messageCount: 42 }));
+    const elements = buildGraphElements(project, sessions);
+    const sessionNode = elements.find((e) => !("source" in e.data) && e.data.type === "session");
+    const lines = (sessionNode?.data.label as string).split("\n");
+    expect(lines).toHaveLength(3);
+    expect(lines[2]).toBe("42");
+  });
+
+  it("a session with 0 messages renders 0 on the third line, not blank/undefined", () => {
+    const sessions = makeSessions(1).map((s) => ({ ...s, messageCount: 0 }));
+    const elements = buildGraphElements(project, sessions);
+    const sessionNode = elements.find((e) => !("source" in e.data) && e.data.type === "session");
+    const lines = (sessionNode?.data.label as string).split("\n");
+    expect(lines[2]).toBe("0");
+  });
+
+  it("the project node's label is unaffected (unrelated, single-line)", () => {
+    const elements = buildGraphElements(project, makeSessions(1));
+    const projectNode = elements.find((e) => !("source" in e.data) && e.data.type === "project");
+    expect((projectNode?.data.label as string).includes("\n")).toBe(false);
+  });
+});
+
+describe("computeTimelinePositions (CR-UI-29 cascade-stack)", () => {
+  function sessionAt(id: string, startedAt: string): Session {
+    return {
+      id,
+      startedAt,
+      endedAt: startedAt,
+      messageCount: 1,
+      gitBranch: "main",
+      preview: id,
+      subagentCount: 0,
+      touchedMemory: false,
+      memoryTouchCount: 0,
+      toolResultCount: 0,
+      hasNotedDescendant: false,
+    };
+  }
+
+  it("returns a fixed centered position for the project node", () => {
+    const { positions } = computeTimelinePositions(project, []);
+    expect(positions[`project:${project.id}`]).toEqual({ x: 500, y: 0 });
+  });
+
+  it("a day with exactly 1 session renders with no cascade offset (flat tile at the baseline)", () => {
+    const { positions, zIndex } = computeTimelinePositions(project, [
+      sessionAt("s1", "2026-06-20T10:00:00Z"),
+    ]);
+    expect(positions.s1.y).toBe(200); // TIMELINE_SESSION_Y baseline
+    expect(zIndex.s1).toBe(1);
+  });
+
+  it("N=15 same-day sessions cascade uncapped, incrementing by exactly one step each, no reset", () => {
+    // Identical startedAt across all 15 -> baseX is identical for every session (span === 0), so any
+    // x/y difference between successive sessions is purely the cascade step (stable sort preserves
+    // this array's insertion order as the chronological/cascade order when timestamps tie).
+    const sessions = Array.from({ length: 15 }, (_, i) => sessionAt(`s${i}`, "2026-06-20T10:00:00Z"));
+    const { positions, zIndex } = computeTimelinePositions(project, sessions);
+    for (let i = 1; i < 15; i++) {
+      const prev = positions[`s${i - 1}`];
+      const curr = positions[`s${i}`];
+      expect(curr.x - prev.x).toBe(18); // TIMELINE_CASCADE_X_STEP
+      expect(curr.y - prev.y).toBe(18); // TIMELINE_CASCADE_Y_STEP
+      expect(zIndex[`s${i}`]).toBe(zIndex[`s${i - 1}`] + 1);
+    }
+    // The day's last (most recent) session has the highest zIndex among the day's sessions.
+    expect(zIndex.s14).toBe(Math.max(...Object.values(zIndex)));
+  });
+
+  it("across 2+ distinct days, each day's chronologically-earliest session shares the same baseline Y", () => {
+    const sessions = [
+      sessionAt("day1-a", "2026-06-20T09:00:00Z"),
+      sessionAt("day1-b", "2026-06-20T10:00:00Z"),
+      sessionAt("day1-c", "2026-06-20T11:00:00Z"),
+      sessionAt("day2-a", "2026-06-21T09:00:00Z"),
+    ];
+    const { positions } = computeTimelinePositions(project, sessions);
+    expect(positions["day1-a"].y).toBe(200);
+    expect(positions["day2-a"].y).toBe(200); // shared baseline, not cumulatively offset by day1
+    expect(positions["day1-b"].y).toBe(200 + 18);
+    expect(positions["day1-c"].y).toBe(200 + 36);
+  });
+
+  it("X position's calculation basis is unchanged — still linear by startedAt across days", () => {
+    const sessions = [
+      sessionAt("early", "2026-06-20T10:00:00Z"),
+      sessionAt("mid", "2026-06-22T10:00:00Z"),
+      sessionAt("late", "2026-06-25T10:00:00Z"),
+    ];
+    const { positions } = computeTimelinePositions(project, sessions);
+    expect(positions.early.x).toBeLessThan(positions.mid.x);
+    expect(positions.mid.x).toBeLessThan(positions.late.x);
+  });
+});
+
+describe("computeTimelinePositions (CR-UI-29 reopened 2026-07-04: local-vs-UTC day boundary regression)", () => {
+  // The reported regression: calendarDayKey grouped by the session's UTC calendar date, but the
+  // label the user actually sees (formatSessionLabel) is formatted in the viewer's LOCAL timezone.
+  // Near a UTC day boundary, a late-evening local session can land on the next UTC calendar day
+  // while an afternoon session the same local day does not — splitting sessions the user sees as
+  // "the same day" into separate cascade groups. These tests force a real viewer timezone
+  // (America/New_York, UTC-4 in late May under DST) so the fixture Date objects' local-vs-UTC
+  // calendar days actually diverge — unlike every other fixture in this file, which is authored in
+  // Z-suffixed UTC and can never exercise this mismatch (the exact gap that let the bug ship).
+  // Accessed via `globalThis as any` rather than the bare `process` global: this app's tsconfig
+  // (browser-only, `types: ["vite/client"]`) has no Node type declarations, and adding them project-
+  // wide is out of scope for this fix — this keeps the workaround local to the one test that needs it.
+  const nodeProcess = (globalThis as { process?: { env: Record<string, string | undefined> } })
+    .process;
+  let originalTz: string | undefined;
+
+  beforeAll(() => {
+    originalTz = nodeProcess?.env.TZ;
+    if (nodeProcess) nodeProcess.env.TZ = "America/New_York";
+  });
+
+  afterAll(() => {
+    if (!nodeProcess) return;
+    if (originalTz === undefined) delete nodeProcess.env.TZ;
+    else nodeProcess.env.TZ = originalTz;
+  });
+
+  function sessionAt(id: string, startedAt: string): Session {
+    return {
+      id,
+      startedAt,
+      endedAt: startedAt,
+      messageCount: 1,
+      gitBranch: "main",
+      preview: id,
+      subagentCount: 0,
+      touchedMemory: false,
+      memoryTouchCount: 0,
+      toolResultCount: 0,
+      hasNotedDescendant: false,
+    };
+  }
+
+  it("groups two sessions that share the LOCAL calendar day but fall on different UTC days into the same cascade (the reported bug: May 25 1:55 PM and 8:58 PM local)", () => {
+    // 1:55 PM America/New_York (EDT, UTC-4) on May 25 -> 17:55 UTC, same UTC day (May 25).
+    // 8:58 PM America/New_York on May 25 -> 00:58 UTC the NEXT day (May 26) — the exact scenario
+    // from the user's screenshots.
+    const sessions = [
+      sessionAt("afternoon", "2026-05-25T17:55:00Z"),
+      sessionAt("evening", "2026-05-26T00:58:00Z"),
+    ];
+    const { positions, zIndex } = computeTimelinePositions(project, sessions);
+
+    // Same cascade group -> the later (evening) session sits exactly one cascade step below/right
+    // of the earlier (afternoon) session's baseline, not at its own separate baseline Y.
+    expect(positions.afternoon.y).toBe(200); // TIMELINE_SESSION_Y baseline
+    expect(positions.evening.y).toBe(200 + 18); // cascaded, NOT also at the baseline
+    expect(positions.evening.x - positions.afternoon.x).toBeGreaterThanOrEqual(18);
+    expect(zIndex.evening).toBe(zIndex.afternoon + 1);
+  });
+
+  it("negative case: two sessions on genuinely different LOCAL calendar days are NOT merged, even when their UTC calendar dates are the same", () => {
+    // 11:50 PM America/New_York on May 25 -> 03:50 UTC on May 26.
+    // 12:10 AM America/New_York on May 26 -> 04:10 UTC on May 26 (same UTC day as above, but a
+    // genuinely different LOCAL calendar day just after local midnight).
+    const sessions = [
+      sessionAt("lateMay25", "2026-05-26T03:50:00Z"),
+      sessionAt("earlyMay26", "2026-05-26T04:10:00Z"),
+    ];
+    const { positions, zIndex } = computeTimelinePositions(project, sessions);
+
+    // Each is the lone/first session of its own local day -> both at the shared baseline Y, no
+    // cascade offset between them, and no zIndex relationship implying a shared group.
+    expect(positions.lateMay25.y).toBe(200);
+    expect(positions.earlyMay26.y).toBe(200);
+    expect(zIndex.lateMay25).toBe(1);
+    expect(zIndex.earlyMay26).toBe(1);
+  });
+});
+
+describe("CR-UI-33 gradient color helpers", () => {
+  it("hexToRgb parses a 6-digit hex color", () => {
+    expect(hexToRgb("#d64545")).toEqual([0xd6, 0x45, 0x45]);
+  });
+
+  it("hexToRgb parses a 3-digit shorthand hex color", () => {
+    expect(hexToRgb("#f00")).toEqual([0xff, 0, 0]);
+  });
+
+  it("interpolateColor returns the low color at t=0 and high color at t=1", () => {
+    expect(interpolateColor("#000000", "#ffffff", 0)).toBe("rgb(0, 0, 0)");
+    expect(interpolateColor("#000000", "#ffffff", 1)).toBe("rgb(255, 255, 255)");
+  });
+
+  it("interpolateColor clamps out-of-range t", () => {
+    expect(interpolateColor("#000000", "#ffffff", -5)).toBe("rgb(0, 0, 0)");
+    expect(interpolateColor("#000000", "#ffffff", 5)).toBe("rgb(255, 255, 255)");
+  });
+
+  it("interpolateColor produces a midpoint value at t=0.5", () => {
+    expect(interpolateColor("#000000", "#ffffff", 0.5)).toBe("rgb(128, 128, 128)");
+  });
+
+  function sessionWith(id: string, overrides: Partial<Session>): Session {
+    return {
+      id,
+      startedAt: "2026-06-20T10:00:00Z",
+      endedAt: "2026-06-20T11:00:00Z",
+      messageCount: 10,
+      gitBranch: "main",
+      preview: id,
+      subagentCount: 0,
+      touchedMemory: false,
+      memoryTouchCount: 0,
+      toolResultCount: 0,
+      hasNotedDescendant: false,
+      ...overrides,
+    };
+  }
+
+  it("normalizedSessionMetric (sizeGrad): highest messageCount normalizes to 1, lowest to 0", () => {
+    const low = sessionWith("low", { messageCount: 5 });
+    const mid = sessionWith("mid", { messageCount: 50 });
+    const high = sessionWith("high", { messageCount: 100 });
+    const sessions = [low, mid, high];
+    expect(normalizedSessionMetric("sizeGrad", sessions, low)).toBe(0);
+    expect(normalizedSessionMetric("sizeGrad", sessions, high)).toBe(1);
+    expect(normalizedSessionMetric("sizeGrad", sessions, mid)).toBeCloseTo((50 - 5) / (100 - 5));
+  });
+
+  it("normalizedSessionMetric (timeGrad): most recent normalizes to 1, oldest to 0", () => {
+    const oldest = sessionWith("oldest", { startedAt: "2026-06-01T00:00:00Z" });
+    const newest = sessionWith("newest", { startedAt: "2026-06-20T00:00:00Z" });
+    const sessions = [oldest, newest];
+    expect(normalizedSessionMetric("timeGrad", sessions, oldest)).toBe(0);
+    expect(normalizedSessionMetric("timeGrad", sessions, newest)).toBe(1);
+  });
+
+  it("normalizedSessionMetric (durationGrad): longest session normalizes to 1, shortest to 0", () => {
+    const short = sessionWith("short", { startedAt: "2026-06-20T10:00:00Z", endedAt: "2026-06-20T10:05:00Z" });
+    const long = sessionWith("long", { startedAt: "2026-06-20T10:00:00Z", endedAt: "2026-06-20T12:00:00Z" });
+    const sessions = [short, long];
+    expect(normalizedSessionMetric("durationGrad", sessions, short)).toBe(0);
+    expect(normalizedSessionMetric("durationGrad", sessions, long)).toBe(1);
+  });
+
+  it("normalizedSessionMetric falls back to the midpoint (0.5) when every session ties on the metric", () => {
+    const a = sessionWith("a", { messageCount: 10 });
+    const b = sessionWith("b", { messageCount: 10 });
+    expect(normalizedSessionMetric("sizeGrad", [a, b], a)).toBe(0.5);
+  });
+});
+
 describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
   function makeVariedSessions(): Session[] {
     return [
@@ -294,6 +549,36 @@ describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
   it("agents-asc orders fewest subagents first", () => {
     const sorted = sortSessions(makeVariedSessions(), "agents-asc");
     expect(sorted.map((s) => s.id)).toEqual(["s-late", "s-mid", "s-early"]);
+  });
+
+  it("CR-UI-35: memory-desc/memory-asc sort by memoryTouchCount", () => {
+    const sessions: Session[] = [
+      { ...makeVariedSessions()[0], id: "a", memoryTouchCount: 3 },
+      { ...makeVariedSessions()[1], id: "b", memoryTouchCount: 1 },
+      { ...makeVariedSessions()[2], id: "c", memoryTouchCount: 7 },
+    ];
+    expect(sortSessions(sessions, "memory-desc").map((s) => s.id)).toEqual(["c", "a", "b"]);
+    expect(sortSessions(sessions, "memory-asc").map((s) => s.id)).toEqual(["b", "a", "c"]);
+  });
+
+  it("CR-UI-35: tools-desc/tools-asc sort by toolResultCount", () => {
+    const sessions: Session[] = [
+      { ...makeVariedSessions()[0], id: "a", toolResultCount: 2 },
+      { ...makeVariedSessions()[1], id: "b", toolResultCount: 9 },
+      { ...makeVariedSessions()[2], id: "c", toolResultCount: 0 },
+    ];
+    expect(sortSessions(sessions, "tools-desc").map((s) => s.id)).toEqual(["b", "a", "c"]);
+    expect(sortSessions(sessions, "tools-asc").map((s) => s.id)).toEqual(["c", "a", "b"]);
+  });
+
+  it("CR-UI-35: messages-desc/messages-asc sort by messageCount", () => {
+    const sessions: Session[] = [
+      { ...makeVariedSessions()[0], id: "a", messageCount: 40 },
+      { ...makeVariedSessions()[1], id: "b", messageCount: 5 },
+      { ...makeVariedSessions()[2], id: "c", messageCount: 100 },
+    ];
+    expect(sortSessions(sessions, "messages-desc").map((s) => s.id)).toEqual(["c", "a", "b"]);
+    expect(sortSessions(sessions, "messages-asc").map((s) => s.id)).toEqual(["b", "a", "c"]);
   });
 
   it("does not mutate the input array", () => {

@@ -8,16 +8,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "../package.json"), "utf-8"));
 
 test.describe("CR-UI-02 — burger menu", () => {
-  test("shows exactly 3 items: Preferences, Documentation, About", async ({ page }) => {
+  test("shows exactly 4 items: Preferences, Documentation, About, Help (CR-UI-20)", async ({ page }) => {
     await mockApi(page, { projects: [], sessionsByProjectId: {} });
     await page.goto("/");
 
     await page.getByRole("button", { name: "Menu" }).click();
     const items = page.getByRole("menuitem");
-    await expect(items).toHaveCount(3);
+    await expect(items).toHaveCount(4);
     await expect(items.nth(0)).toHaveText("Preferences");
     await expect(items.nth(1)).toHaveText("Documentation");
     await expect(items.nth(2)).toHaveText("About");
+    await expect(items.nth(3)).toHaveText("Help");
   });
 
   test("a saved layout preference persists across reload as the initial layout", async ({ page }) => {

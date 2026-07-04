@@ -1,23 +1,24 @@
 # Indexer ↔ Visualizer API Contract
 
-**Owner:** Indexer team. **Version:** v1.8.
+**Owner:** Indexer team. **Version:** v1.9.
 Golden copy — the Visualizer reads this file directly; never copy it into `visualizer/`.
 Change workflow: `REQUIREMENTS/PRODUCT_OWNER_PROCESS.md` § Contract Change Workflow.
 
 ## Status
 Sprint 1 (CR-CORE-01, CR-API-01, CR-CORE-02) implemented, plus hotfix `CR-API-02` (CORS, see below),
 Sprint 2's `CR-UI-06` session detail endpoint, Sprint 3's `CR-UI-07` (session count fields) and
-`CR-UI-08` (notes + content endpoints, see below), and Sprint 5's `CR-UI-15` (Agent Path field +
+`CR-UI-08` (notes + content endpoints, see below), Sprint 5's `CR-UI-15` (Agent Path field +
 Agent/Tool content endpoints), `CR-UI-25` (project content endpoint), and `CR-UI-28`
-(`hasNotedDescendant` aggregate). All endpoints below are backed by an Express app
-bound to `127.0.0.1` only, port `4317`
+(`hasNotedDescendant` aggregate), and Sprint 6's `CR-CORE-03` (claude-map notes, see below). All
+endpoints below are backed by an Express app bound to `127.0.0.1` only, port `4317`
 (`REQUIREMENTS/SHARED_CONSTANTS.md`). Every `GET` endpoint triggers an incremental, mtime-based
 rescan (D13) before reading `index.db`, so responses reflect on-disk changes without a separate
 poll/rescan endpoint being required yet.
 
 Bookmarks/links (D14) are not implemented yet — that's a later CR. `annotations.db` holds persisted
-custom scan roots (D20) and, as of `CR-UI-08`, user-authored notes attached to a graph node (see
-`notes` table below).
+custom scan roots (D20), user-authored notes attached to a graph node (`CR-UI-08`, see `notes` table
+below), and, as of `CR-CORE-03`, ingest-written "claude-map" notes (see `claude_map_notes` table
+below).
 
 ## Endpoints
 
@@ -241,6 +242,39 @@ if omitted).
 **Response 404** (no note existed for that `nodeType`/`nodeId`, or unknown `:id`): `{ "error": "..." }`
 — never a crash on a repeated delete.
 
+### Claude-map notes (v1.9, `CR-CORE-03`)
+The "claude-map" tagging skill (invoked by the user inside any live Claude Code session, e.g.
+`/claude-map <text>`) posts a literal `[claude-map] <text>` marker message into that session's
+transcript as an ordinary user-turn message — no live/networked mechanism, just transcript content
+the Indexer picks up on its next scan like everything else it parses. Every `[claude-map]` marker
+found in one session is concatenated into a **single, aggregated, view-only note** for that session
+as a whole (no per-message anchor, no new node type — always `nodeType: "session"`), persisted in a
+dedicated `claude_map_notes` table in `annotations.db` (durable user data, D16) that is entirely
+separate from the user-editable `notes` table (`CR-UI-08`) — the two never collide or overwrite each
+other. Unlike `notes`, this content has **no client-facing write path** — it is written only during
+the server's ingest/rescan pass, replacing a session's row wholesale each time that session is
+re-parsed (safe: no user edits exist here to lose). There is accordingly no `PUT`/`DELETE` for this
+resource, only a read endpoint.
+
+`ClaudeMapNoteEntry`:
+```jsonc
+{
+  "projectId": "D--Fixture--ProjectOne",
+  "nodeType": "session",
+  "nodeId": "session-bbb",
+  "content": "First tagged moment.\n\nSecond tagged moment.",
+  "createdAt": "2026-07-03T12:00:00.000Z",
+  "updatedAt": "2026-07-03T12:05:00.000Z"
+}
+```
+Note there is no `format` field here (unlike `NoteEntry`) — this content is always plain concatenated
+marker text, never a user-chosen format.
+
+#### `GET /api/projects/:id/claude-map-notes`
+**Response 200:** `ClaudeMapNoteEntry[]` — one entry per session that has at least one `[claude-map]`
+marker (possibly empty for a project with none).
+**Response 404** (unknown `:id`): `{ "error": "Unknown project id: <id>" }`
+
 ### `POST /api/projects/browse` (v1.1, D20/CR-CORE-02)
 Adds a custom scan root beyond the default `{CLAUDE_HOME}/projects`. Accepts either a path that is
 itself a projects-root directory (immediate subdirectories are project folders containing top-level
@@ -283,6 +317,15 @@ future packaged desktop shell), add that origin to `ALLOWED_ORIGINS` in `indexer
 it's a plain array, no other code changes needed.
 
 ## Changelog
+- **v1.9** (2026-07-03, Sprint 6, `CR-CORE-03`) — Added `GET /api/projects/:id/claude-map-notes`
+  (read-only; no `PUT`/`DELETE` — this content has no client-facing write path). Backed by a new
+  `claude_map_notes` table in `annotations.db` (durable user data, D16), separate from and never
+  colliding with the `notes` table (`CR-UI-08`). Ingest-time only: during the existing session
+  transcript parsing pass, every `[claude-map] <text>` marker message found is concatenated into a
+  single row keyed `(projectId, "session", sessionId)`, replaced wholesale on each rescan that
+  re-parses that session (safe — no user-edit path exists for this table to collide with). No changes
+  to any existing endpoint/schema; CORS allowlist/methods unchanged (this is a `GET`, already
+  covered).
 - **v1.8** (2026-07-03, Sprint 5, `CR-UI-28`) — Added `hasNotedDescendant` boolean field to
   `GET /api/projects/:id/sessions`'s response — true if the session itself or any of its subagent/
   memory-touch/tool sub-items has a saved note in `annotations.db`'s `notes` table. Computed in

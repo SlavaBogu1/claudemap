@@ -4,23 +4,51 @@ import { BurgerMenu } from "./BurgerMenu";
 import pkg from "../../package.json";
 
 describe("BurgerMenu (CR-UI-02)", () => {
-  it("shows exactly 3 menu items: Preferences, Documentation, About", () => {
+  it("shows exactly 4 menu items: Preferences, Documentation, About, Help (CR-UI-20)", () => {
     render(
       <BurgerMenu
         preferredLayout="cose"
         onPreferredLayoutChange={vi.fn()}
         preferredSort="date-desc"
         onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
         theme="system"
         onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
     const items = screen.getAllByRole("menuitem");
-    expect(items).toHaveLength(3);
-    expect(items.map((i) => i.textContent)).toEqual(["Preferences", "Documentation", "About"]);
+    expect(items).toHaveLength(4);
+    expect(items.map((i) => i.textContent)).toEqual(["Preferences", "Documentation", "About", "Help"]);
+  });
+
+  it("Help opens a Markdown formatting guide with no network call (CR-UI-20)", () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    render(
+      <BurgerMenu
+        preferredLayout="cose"
+        onPreferredLayoutChange={vi.fn()}
+        preferredSort="date-desc"
+        onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
+        showBanners={true}
+        onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /menu/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Help" }));
+    expect(screen.getByRole("dialog", { name: /help/i })).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("About shows the app name and package.json version, with no network call", () => {
@@ -31,10 +59,14 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredLayoutChange={vi.fn()}
         preferredSort="date-desc"
         onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
         theme="system"
         onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -51,10 +83,14 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredLayoutChange={vi.fn()}
         preferredSort="date-desc"
         onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
         theme="system"
         onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -71,10 +107,14 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredLayoutChange={onChange}
         preferredSort="date-desc"
         onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
         theme="system"
         onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -93,10 +133,14 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredLayoutChange={vi.fn()}
         preferredSort="date-desc"
         onPreferredSortChange={onSortChange}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
         theme="system"
         onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -107,6 +151,32 @@ describe("BurgerMenu (CR-UI-02)", () => {
     expect(onSortChange).toHaveBeenCalledWith("agents-desc");
   });
 
+  it("Preferences lets the user pick a default time range and reports the change (CR-UI-27)", () => {
+    const onTimeRangeChange = vi.fn();
+    render(
+      <BurgerMenu
+        preferredLayout="cose"
+        onPreferredLayoutChange={vi.fn()}
+        preferredSort="date-desc"
+        onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={onTimeRangeChange}
+        showBanners={true}
+        onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /menu/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
+    fireEvent.change(screen.getByLabelText(/default time range/i), {
+      target: { value: "week" },
+    });
+    expect(onTimeRangeChange).toHaveBeenCalledWith("week");
+  });
+
   it("Preferences lets the user toggle session banners and reports the change (CR-UI-07)", () => {
     const onShowBannersChange = vi.fn();
     render(
@@ -115,10 +185,14 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredLayoutChange={vi.fn()}
         preferredSort="date-desc"
         onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={onShowBannersChange}
         theme="system"
         onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -135,15 +209,43 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onPreferredLayoutChange={vi.fn()}
         preferredSort="date-desc"
         onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
         showBanners={true}
         onShowBannersChange={vi.fn()}
         theme="system"
         onThemeChange={onThemeChange}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
     fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
     fireEvent.change(screen.getByLabelText(/theme/i), { target: { value: "dark" } });
     expect(onThemeChange).toHaveBeenCalledWith("dark");
+  });
+
+  it("Preferences lets the user pick a session color scheme and reports the change (CR-UI-33)", () => {
+    const onSessionColorSchemeChange = vi.fn();
+    render(
+      <BurgerMenu
+        preferredLayout="cose"
+        onPreferredLayoutChange={vi.fn()}
+        preferredSort="date-desc"
+        onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
+        showBanners={true}
+        onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={onSessionColorSchemeChange}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /menu/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Preferences" }));
+    fireEvent.change(screen.getByLabelText(/session color scheme/i), { target: { value: "sizeGrad" } });
+    expect(onSessionColorSchemeChange).toHaveBeenCalledWith("sizeGrad");
   });
 });

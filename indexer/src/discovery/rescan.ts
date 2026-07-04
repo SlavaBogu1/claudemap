@@ -12,6 +12,8 @@ import {
   upsertProject,
   upsertSession
 } from "../db/indexDb.js";
+import type { AnnotationsDb } from "../db/annotationsDb.js";
+import { deleteClaudeMapNote, upsertClaudeMapNote } from "../db/annotationsDb.js";
 import { parseSessionFile } from "../parsing/sessionParser.js";
 import { parseSubagentMeta } from "../parsing/subagentParser.js";
 import { parseMemoryFile } from "../parsing/memoryParser.js";
@@ -21,6 +23,13 @@ export interface RescanOptions {
   db: IndexDb;
   /** Resolved "projects root" directories (default root + any persisted custom roots). */
   projectsRoots: string[];
+  /**
+   * (CR-CORE-03) Optional — when provided, a session that's re-parsed this rescan has its
+   * `claude_map_notes` row replaced wholesale from the freshly-parsed marker set (or deleted if that
+   * set is now empty). Optional so callers/tests that only care about index.db (D16: the two files
+   * are never conflated) aren't forced to open annotations.db just to call rescan().
+   */
+  annotationsDb?: AnnotationsDb;
   logger?: Logger;
   /** Injectable clock, defaults to Date.now — lets tests assert incremental behavior deterministically. */
   now?: () => number;
@@ -39,7 +48,7 @@ export interface RescanStats {
  * callers trigger this explicitly (e.g. at the top of a GET route, or after a successful browse).
  */
 export function rescan(options: RescanOptions): RescanStats {
-  const { db, projectsRoots } = options;
+  const { db, projectsRoots, annotationsDb } = options;
   const logger = options.logger ?? consoleLogger;
   const now = options.now ?? Date.now;
 
@@ -62,7 +71,7 @@ export function rescan(options: RescanOptions): RescanStats {
       upsertProject(db, projectId, root, projectDirPath);
       stats.projectsScanned++;
 
-      rescanProjectSessions(db, projectId, projectDirPath, logger, now, stats);
+      rescanProjectSessions(db, annotationsDb, projectId, projectDirPath, logger, now, stats);
       rescanProjectMemory(db, projectId, projectDirPath, logger, now, stats);
     }
   }
@@ -72,6 +81,7 @@ export function rescan(options: RescanOptions): RescanStats {
 
 function rescanProjectSessions(
   db: IndexDb,
+  annotationsDb: AnnotationsDb | undefined,
   projectId: string,
   projectDirPath: string,
   logger: Logger,
@@ -140,6 +150,17 @@ function rescanProjectSessions(
     replaceSubagents(db, sessionId, subagentRecords);
     replaceOverflows(db, sessionId, parsed.overflows);
     replaceMemoryTouches(db, sessionId, parsed.memoryTouches);
+
+    // (CR-CORE-03) Wholesale replace, keyed (projectId, "session", sessionId) — safe because this
+    // table has no user-edit path to collide with (unlike notes/CR-UI-08). Only touched when this
+    // session was actually re-parsed this rescan (unchanged sessions are skipped above, D13).
+    if (annotationsDb) {
+      if (parsed.claudeMapNotes.length > 0) {
+        upsertClaudeMapNote(annotationsDb, projectId, "session", sessionId, parsed.claudeMapNotes.join("\n\n"));
+      } else {
+        deleteClaudeMapNote(annotationsDb, projectId, "session", sessionId);
+      }
+    }
 
     upsertSession(db, {
       id: sessionId,

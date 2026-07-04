@@ -2,12 +2,18 @@ import { describe, it, expect, beforeEach } from "vitest";
 import {
   getPreferredLayout,
   setPreferredLayout,
+  getPreferredSort,
+  setPreferredSort,
   getPreferredDetailPanelWidth,
   setPreferredDetailPanelWidth,
   clampDetailPanelWidth,
   DETAIL_PANEL_MIN_WIDTH,
   DETAIL_PANEL_MAX_WIDTH,
   DETAIL_PANEL_DEFAULT_WIDTH,
+  getPreferredTimeRange,
+  setPreferredTimeRange,
+  getPreferredSessionColorScheme,
+  setPreferredSessionColorScheme,
 } from "./preferences";
 
 describe("preferences", () => {
@@ -32,6 +38,36 @@ describe("preferences", () => {
   it("falls back to default for an invalid stored value", () => {
     localStorage.setItem("claudeMap.preferredLayout", "not-a-layout");
     expect(getPreferredLayout()).toBe("cose");
+  });
+});
+
+// CR-UI-10 (Sprint 3) / CR-UI-35 (Sprint 6): sort preference, including the 6 new metric options.
+describe("sort preference", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it("defaults to date-desc when nothing stored", () => {
+    expect(getPreferredSort()).toBe("date-desc");
+  });
+
+  it("persists and returns each of the 6 new CR-UI-35 sort options", () => {
+    for (const sort of [
+      "memory-desc",
+      "memory-asc",
+      "tools-desc",
+      "tools-asc",
+      "messages-desc",
+      "messages-asc",
+    ] as const) {
+      setPreferredSort(sort);
+      expect(getPreferredSort()).toBe(sort);
+    }
+  });
+
+  it("falls back to default for an invalid stored value", () => {
+    localStorage.setItem("claudeMap.preferredSort", "not-a-sort");
+    expect(getPreferredSort()).toBe("date-desc");
   });
 });
 
@@ -75,5 +111,47 @@ describe("detail panel width (percent of viewport width)", () => {
   it("falls back to the default for a non-numeric stored value", () => {
     localStorage.setItem("claudeMap.detailPanelWidth", "not-a-number");
     expect(getPreferredDetailPanelWidth()).toBe(DETAIL_PANEL_DEFAULT_WIDTH);
+  });
+});
+
+// CR-UI-27 (Sprint 6): time-range filter preference.
+describe("time range preference (CR-UI-27)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('defaults to "all" when nothing stored', () => {
+    expect(getPreferredTimeRange()).toBe("all");
+  });
+
+  it("persists and returns a stored time range choice", () => {
+    setPreferredTimeRange("week");
+    expect(getPreferredTimeRange()).toBe("week");
+  });
+
+  it("falls back to default for an invalid stored value", () => {
+    localStorage.setItem("claudeMap.preferredTimeRange", "not-a-range");
+    expect(getPreferredTimeRange()).toBe("all");
+  });
+});
+
+// CR-UI-33 (Sprint 6): session color scheme preference.
+describe("session color scheme preference (CR-UI-33)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('defaults to "default" when nothing stored', () => {
+    expect(getPreferredSessionColorScheme()).toBe("default");
+  });
+
+  it("persists and returns a stored scheme choice", () => {
+    setPreferredSessionColorScheme("sizeGrad");
+    expect(getPreferredSessionColorScheme()).toBe("sizeGrad");
+  });
+
+  it("falls back to default for an invalid stored value", () => {
+    localStorage.setItem("claudeMap.sessionColorScheme", "not-a-scheme");
+    expect(getPreferredSessionColorScheme()).toBe("default");
   });
 });

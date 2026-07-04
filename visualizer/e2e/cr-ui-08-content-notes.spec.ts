@@ -159,9 +159,13 @@ test.describe("CR-UI-08 — Content tab + inline notes", () => {
     await clickGraphNode(page, target.id);
     await openContentTab(page);
 
-    await expect(page.getByLabel("Note")).toHaveValue("Already noted.");
+    // CR-UI-19: a saved note opens in view mode (rendered Markdown), not directly in the raw
+    // source textarea — see cr-ui-19-note-markdown.spec.ts for the rendering behavior itself.
+    await expect(page.getByTestId("note-view")).toContainText("Already noted.");
     await expect(page.getByRole("button", { name: "Delete Note" })).toBeVisible();
 
+    await page.getByRole("button", { name: "Edit" }).click();
+    await expect(page.getByLabel("Note")).toHaveValue("Already noted.");
     await page.getByLabel("Note").fill("Updated note text.");
     await page.getByRole("button", { name: "Save" }).click();
     await expect.poll(() => handle.notes[0]?.content).toBe("Updated note text.");
