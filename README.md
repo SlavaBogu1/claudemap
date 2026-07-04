@@ -47,7 +47,29 @@ files. User-added scan roots are stored separately so they survive a cache rebui
 
 ## Running locally
 
-Two terminals:
+One command, from the repo root:
+
+```bash
+npm install
+npm run start
+```
+
+This installs both `indexer/` and `visualizer/` (npm workspaces) and launches them together in
+production-style mode — the Indexer's normal server plus a `vite build` + `vite preview` of the
+Visualizer — with labeled, colored output per service. Open **http://localhost:5173** in your
+browser once both are up. The project picker populates from your real `~/.claude/projects/`
+directory.
+
+> The Indexer only accepts requests from `http://localhost:5173` / `http://127.0.0.1:5173` (CORS
+> allowlist) — the root `start` script pins the Visualizer's preview server to port `5173` (Vite's
+> own default preview port is `4173`) specifically so this works out of the box. If that port is
+> already taken on your machine, free it first; changing the port would also require updating
+> `ALLOWED_ORIGINS` in `indexer/src/config.ts`.
+
+## Development
+
+Prefer working on one service at a time with hot reload? Use two terminals instead of the
+one-command path above:
 
 ```bash
 # Terminal 1 — Indexer (backend API)
@@ -65,14 +87,7 @@ npm run dev
 # → http://localhost:5173
 ```
 
-Open **http://localhost:5173** in your browser. The project picker populates from your real
-`~/.claude/projects/` directory.
-
-> The Indexer only accepts requests from `http://localhost:5173` / `http://127.0.0.1:5173` (CORS
-> allowlist). If your Vite dev server starts on a different port, update `ALLOWED_ORIGINS` in
-> `indexer/src/config.ts`.
-
-## Development
+Test/build commands, per package:
 
 ```bash
 cd indexer

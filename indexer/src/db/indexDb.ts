@@ -100,6 +100,56 @@ export function getMemoryFileMtime(db: IndexDb, filePath: string): number | null
   return row ? row.mtime_ms : null;
 }
 
+/**
+ * (CR-CORE-04) Every currently-indexed session id for a project — the "known before this rescan"
+ * side of the diff against the on-disk `.jsonl` listing, used to detect sessions whose file has
+ * since been deleted so their stale index.db rows can be pruned.
+ */
+export function listSessionIdsForProject(db: IndexDb, projectId: string): string[] {
+  const rows = db.prepare(`SELECT id FROM sessions WHERE project_id = ?`).all(projectId) as { id: string }[];
+  return rows.map((r) => r.id);
+}
+
+/**
+ * (CR-CORE-04) Deletes a session row and all of its child rows from index.db — `subagents`,
+ * `tool_result_overflows`, `session_memory_touches` — since this schema has no FK cascade. Called
+ * only when the session's backing `.jsonl` file has been confirmed gone from disk during a rescan.
+ * **Never touches `annotations.db`** (D16): a user note or claude-map note on this session's id
+ * survives untouched so it isn't lost if the file is later restored/renamed.
+ */
+export function deleteSession(db: IndexDb, sessionId: string): void {
+  const del = db.transaction((id: string) => {
+    db.prepare(`DELETE FROM subagents WHERE session_id = ?`).run(id);
+    db.prepare(`DELETE FROM tool_result_overflows WHERE session_id = ?`).run(id);
+    db.prepare(`DELETE FROM session_memory_touches WHERE session_id = ?`).run(id);
+    db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
+  });
+  del(sessionId);
+}
+
+/**
+ * (CR-CORE-04) Every currently-indexed memory file path for a project — the "known before this
+ * rescan" side of the diff against the on-disk `memory/*.md` listing, used to detect memory files
+ * whose file has since been deleted so their stale index.db row can be pruned.
+ */
+export function listMemoryFilePathsForProject(db: IndexDb, projectId: string): string[] {
+  const rows = db
+    .prepare(`SELECT file_path FROM memory_files WHERE project_id = ?`)
+    .all(projectId) as { file_path: string }[];
+  return rows.map((r) => r.file_path);
+}
+
+/**
+ * (CR-CORE-04) Deletes one `memory_files` row — called only when that file has been confirmed gone
+ * from disk during a rescan. `session_memory_touches` rows referencing this path are left alone
+ * (owned by their session, cleaned up only when that session itself is deleted); a dangling
+ * reference just resolves to `name: null` via `getSessionDetail`'s LEFT JOIN, same as any
+ * touch pointing at a memory file that was never indexed. **Never touches `annotations.db`** (D16).
+ */
+export function deleteMemoryFile(db: IndexDb, filePath: string): void {
+  db.prepare(`DELETE FROM memory_files WHERE file_path = ?`).run(filePath);
+}
+
 export interface UpsertSessionInput {
   id: string;
   projectId: string;

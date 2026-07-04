@@ -1,0 +1,18 @@
+{
+  "name": "claude-session-explorer",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Claude Session Explorer — root workspace. One-command install/run for the Indexer + Visualizer (CR-PROC-04). Each package's own dev workflow (cd indexer|visualizer && npm run dev) is unchanged.",
+  "workspaces": [
+    "indexer",
+    "visualizer"
+  ],
+  "scripts": {
+    "start": "concurrently -n indexer,visualizer -c blue,magenta \"npm:start:indexer\" \"npm:start:visualizer\"",
+    "start:indexer": "npm run build -w indexer && npm run start -w indexer",
+    "start:visualizer": "npm run build -w visualizer && npm run preview -w visualizer -- --port 5173"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.3"
+  }
+}

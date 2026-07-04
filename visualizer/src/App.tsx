@@ -204,20 +204,62 @@ function App() {
       ...prev.filter((n) => !(n.nodeType === note.nodeType && n.nodeId === note.nodeId)),
       note,
     ]);
-    refetchSessionsForNotedDescendant();
+    refreshProjectData();
   }
 
   function handleNoteDeleted(nodeType: NodeType, nodeId: string) {
     setNotes((prev) => prev.filter((n) => !(n.nodeType === nodeType && n.nodeId === nodeId)));
-    refetchSessionsForNotedDescendant();
+    refreshProjectData();
   }
 
-  function refetchSessionsForNotedDescendant() {
+  // CR-CORE-04 (Sprint 7): generalized from the CR-UI-28 `refetchSessionsForNotedDescendant` — now
+  // re-fetches both sessions and notes for the current project, shared by the note-mutation call
+  // sites above and the new burger-menu Refresh action below. Also handles the case where a
+  // session's backing file was deleted and the Indexer's rescan pruned it: if the currently-selected
+  // session/item no longer appears in the refreshed sessions list, clear the selection so the
+  // Detail/Content panels don't keep showing a now-nonexistent session's stale data.
+  //
+  // 2026-07-04 (CR-CORE-04 re-fix, post-Sprint-7-validation-fail): also re-fetch the full projects
+  // list and merge it in, same upsert-by-id pattern as `handleProjectsAdded`. Without this, a
+  // deleted session was correctly dropped from `sessions`/the graph, but the separately-cached
+  // `project.sessionCount` (read by DetailPanel's "Sessions: N" and the project-picker dropdown's
+  // "(N sessions)" label) never updated since `projects` was otherwise only ever fetched once on
+  // mount — reproducing the CR's own original stale-count symptom. Chose the full re-fetch+merge
+  // over a cheaper `sessionCount: sessions.length` patch because it also picks up `lastActiveAt`
+  // and any other server-side project-level change, not just this one field.
+  function refreshProjectData() {
     if (!selectedProjectId) return;
-    fetchSessions(selectedProjectId)
-      .then((s) => setSessions(s))
+    fetchProjects()
+      .then((ps) => {
+        setProjects((prev) => {
+          const byId = new Map(prev.map((p) => [p.id, p]));
+          for (const p of ps) byId.set(p.id, p);
+          return Array.from(byId.values());
+        });
+      })
       .catch(() => {
-        // Best-effort — a failed refetch just leaves hasNotedDescendant as it was, not a crash.
+        // Best-effort — a failed project-list refetch just leaves sessionCount/lastActiveAt stale
+        // until the next successful refresh, not a crash.
+      });
+    fetchSessions(selectedProjectId)
+      .then((s) => {
+        setSessions(s);
+        const stillExists = (id: string | undefined) =>
+          id !== undefined && s.some((session) => session.id === id);
+        if (selectedSessionId && !stillExists(selectedSessionId)) {
+          setSelectedSessionId(null);
+        }
+        if (selectedItem?.sessionId && !stillExists(selectedItem.sessionId)) {
+          setSelectedItem(null);
+        }
+      })
+      .catch(() => {
+        // Best-effort — a failed refetch just leaves sessions/selection as they were, not a crash.
+      });
+    fetchNotes(selectedProjectId)
+      .then((n) => setNotes(n))
+      .catch(() => {
+        // Best-effort, same as the initial per-project fetch.
       });
   }
 
@@ -284,6 +326,7 @@ function App() {
           onThemeChange={handleThemeChange}
           sessionColorScheme={sessionColorScheme}
           onSessionColorSchemeChange={handleSessionColorSchemeChange}
+          onRefresh={refreshProjectData}
         />
       </header>
 

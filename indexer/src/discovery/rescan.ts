@@ -2,8 +2,12 @@ import fs from "node:fs";
 import path from "node:path";
 import type { IndexDb } from "../db/indexDb.js";
 import {
+  deleteMemoryFile,
+  deleteSession,
   getMemoryFileMtime,
   getSessionMtime,
+  listMemoryFilePathsForProject,
+  listSessionIdsForProject,
   replaceMemoryTouches,
   replaceOverflows,
   replaceSubagents,
@@ -40,6 +44,10 @@ export interface RescanStats {
   sessionsParsed: number;
   sessionsSkipped: number;
   memoryFilesParsed: number;
+  /** (CR-CORE-04) Previously-indexed sessions pruned this rescan because their `.jsonl` file is gone. */
+  sessionsDeleted: number;
+  /** (CR-CORE-04) Previously-indexed memory files pruned this rescan because their `.md` file is gone. */
+  memoryFilesDeleted: number;
 }
 
 /**
@@ -52,7 +60,14 @@ export function rescan(options: RescanOptions): RescanStats {
   const logger = options.logger ?? consoleLogger;
   const now = options.now ?? Date.now;
 
-  const stats: RescanStats = { projectsScanned: 0, sessionsParsed: 0, sessionsSkipped: 0, memoryFilesParsed: 0 };
+  const stats: RescanStats = {
+    projectsScanned: 0,
+    sessionsParsed: 0,
+    sessionsSkipped: 0,
+    memoryFilesParsed: 0,
+    sessionsDeleted: 0,
+    memoryFilesDeleted: 0
+  };
 
   for (const root of projectsRoots) {
     let projectDirs: fs.Dirent[];
@@ -96,10 +111,13 @@ function rescanProjectSessions(
     return;
   }
 
+  const sessionIdsOnDisk = new Set<string>();
+
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
 
     const sessionId = entry.name.slice(0, -".jsonl".length);
+    sessionIdsOnDisk.add(sessionId);
     const filePath = path.join(projectDirPath, entry.name);
 
     let mtimeMs: number;
@@ -180,6 +198,17 @@ function rescanProjectSessions(
 
     stats.sessionsParsed++;
   }
+
+  // (CR-CORE-04) Prune any previously-indexed session whose backing `.jsonl` file is no longer on
+  // disk. Diffed against the on-disk listing just built above (not re-read), so this only ever
+  // deletes index.db rows — annotations.db (notes, claude-map notes) is never touched here (D16):
+  // if the file is later restored/renamed, its notes are still there under the same session id.
+  for (const indexedSessionId of listSessionIdsForProject(db, projectId)) {
+    if (!sessionIdsOnDisk.has(indexedSessionId)) {
+      deleteSession(db, indexedSessionId);
+      stats.sessionsDeleted++;
+    }
+  }
 }
 
 function rescanProjectMemory(
@@ -191,33 +220,48 @@ function rescanProjectMemory(
   stats: RescanStats
 ): void {
   const memoryDir = path.join(projectDirPath, "memory");
-  if (!fs.existsSync(memoryDir)) return;
+  const memoryFilePathsOnDisk = new Set<string>();
 
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(memoryDir, { withFileTypes: true });
-  } catch (err) {
-    logger.warn(`Cannot read memory directory ${memoryDir}: ${(err as Error).message}`);
-    return;
-  }
-
-  for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-    const filePath = path.join(memoryDir, entry.name);
-
-    let mtimeMs: number;
+  if (fs.existsSync(memoryDir)) {
+    let entries: fs.Dirent[];
     try {
-      mtimeMs = fs.statSync(filePath).mtimeMs;
+      entries = fs.readdirSync(memoryDir, { withFileTypes: true });
     } catch (err) {
-      logger.warn(`Cannot stat memory file ${filePath}: ${(err as Error).message}`);
-      continue;
+      logger.warn(`Cannot read memory directory ${memoryDir}: ${(err as Error).message}`);
+      entries = [];
     }
 
-    const previousMtime = getMemoryFileMtime(db, filePath);
-    if (previousMtime !== null && previousMtime === mtimeMs) continue;
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
+      const filePath = path.join(memoryDir, entry.name);
+      memoryFilePathsOnDisk.add(filePath);
 
-    const record = parseMemoryFile(filePath, projectId);
-    upsertMemoryFile(db, record, mtimeMs, now());
-    stats.memoryFilesParsed++;
+      let mtimeMs: number;
+      try {
+        mtimeMs = fs.statSync(filePath).mtimeMs;
+      } catch (err) {
+        logger.warn(`Cannot stat memory file ${filePath}: ${(err as Error).message}`);
+        continue;
+      }
+
+      const previousMtime = getMemoryFileMtime(db, filePath);
+      if (previousMtime !== null && previousMtime === mtimeMs) continue;
+
+      const record = parseMemoryFile(filePath, projectId);
+      upsertMemoryFile(db, record, mtimeMs, now());
+      stats.memoryFilesParsed++;
+    }
+  }
+  // Note: a missing `memory/` directory (never existed, or the whole folder was removed) falls
+  // through here with an empty `memoryFilePathsOnDisk` — every previously-indexed memory file for
+  // this project is then correctly treated as deleted below, same as the per-file removal case.
+
+  // (CR-CORE-04) Prune any previously-indexed memory file whose backing `.md` file is no longer on
+  // disk. Only index.db's `memory_files` row is removed — annotations.db is never touched (D16).
+  for (const indexedFilePath of listMemoryFilePathsForProject(db, projectId)) {
+    if (!memoryFilePathsOnDisk.has(indexedFilePath)) {
+      deleteMemoryFile(db, indexedFilePath);
+      stats.memoryFilesDeleted++;
+    }
   }
 }

@@ -24,6 +24,10 @@ export interface BurgerMenuProps {
   // CR-UI-33: "Session color scheme" preference.
   sessionColorScheme: SessionColorScheme;
   onSessionColorSchemeChange: (scheme: SessionColorScheme) => void;
+  // CR-CORE-04 (Sprint 7): manual refresh — a direct action (not a panel), re-fetches the current
+  // project's sessions and notes so deletions since the last load are reflected without a full page
+  // reload.
+  onRefresh: () => void;
 }
 
 export function BurgerMenu({
@@ -39,6 +43,7 @@ export function BurgerMenu({
   onThemeChange,
   sessionColorScheme,
   onSessionColorSchemeChange,
+  onRefresh,
 }: BurgerMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
@@ -102,6 +107,19 @@ export function BurgerMenu({
               }}
             >
               Help
+            </button>
+          </li>
+          {/* CR-CORE-04: a direct action (not a panel) — closes the menu immediately and re-fetches
+              the current project's sessions/notes so deletions since the last load are reflected. */}
+          <li role="menuitem">
+            <button
+              type="button"
+              onClick={() => {
+                onRefresh();
+                setMenuOpen(false);
+              }}
+            >
+              Refresh
             </button>
           </li>
         </ul>

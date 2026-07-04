@@ -13,7 +13,7 @@ test.describe("CR-UI-20 — Help burger-menu entry", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Menu" }).click();
     const items = page.getByRole("menuitem");
-    await expect(items).toHaveText(["Preferences", "Documentation", "About", "Help"]);
+    await expect(items).toHaveText(["Preferences", "Documentation", "About", "Help", "Refresh"]);
 
     await page.getByRole("menuitem", { name: "Help" }).click();
     await expect(page.getByRole("dialog", { name: /help/i })).toBeVisible();

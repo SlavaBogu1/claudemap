@@ -4,7 +4,7 @@ import { BurgerMenu } from "./BurgerMenu";
 import pkg from "../../package.json";
 
 describe("BurgerMenu (CR-UI-02)", () => {
-  it("shows exactly 4 menu items: Preferences, Documentation, About, Help (CR-UI-20)", () => {
+  it("shows exactly 5 menu items: Preferences, Documentation, About, Help, Refresh (CR-UI-20, CR-CORE-04)", () => {
     render(
       <BurgerMenu
         preferredLayout="cose"
@@ -19,12 +19,44 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
     const items = screen.getAllByRole("menuitem");
-    expect(items).toHaveLength(4);
-    expect(items.map((i) => i.textContent)).toEqual(["Preferences", "Documentation", "About", "Help"]);
+    expect(items).toHaveLength(5);
+    expect(items.map((i) => i.textContent)).toEqual([
+      "Preferences",
+      "Documentation",
+      "About",
+      "Help",
+      "Refresh",
+    ]);
+  });
+
+  it("Refresh calls onRefresh and closes the menu (CR-CORE-04)", () => {
+    const onRefresh = vi.fn();
+    render(
+      <BurgerMenu
+        preferredLayout="cose"
+        onPreferredLayoutChange={vi.fn()}
+        preferredSort="date-desc"
+        onPreferredSortChange={vi.fn()}
+        preferredTimeRange="all"
+        onPreferredTimeRangeChange={vi.fn()}
+        showBanners={true}
+        onShowBannersChange={vi.fn()}
+        theme="system"
+        onThemeChange={vi.fn()}
+        sessionColorScheme="default"
+        onSessionColorSchemeChange={vi.fn()}
+        onRefresh={onRefresh}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /menu/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("menuitem")).not.toBeInTheDocument();
   });
 
   it("Help opens a Markdown formatting guide with no network call (CR-UI-20)", () => {
@@ -43,6 +75,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -67,6 +100,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -91,6 +125,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -115,6 +150,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -141,6 +177,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -167,6 +204,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -193,6 +231,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -217,6 +256,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={onThemeChange}
         sessionColorScheme="default"
         onSessionColorSchemeChange={vi.fn()}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
@@ -241,6 +281,7 @@ describe("BurgerMenu (CR-UI-02)", () => {
         onThemeChange={vi.fn()}
         sessionColorScheme="default"
         onSessionColorSchemeChange={onSessionColorSchemeChange}
+        onRefresh={vi.fn()}
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: /menu/i }));
