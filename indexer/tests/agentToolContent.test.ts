@@ -24,6 +24,7 @@ describe("Agent Path field on GET .../detail (CR-UI-15)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });
@@ -65,6 +66,7 @@ describe("GET /api/projects/:id/agent-content (CR-UI-15)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });
@@ -168,6 +170,7 @@ describe("GET /api/projects/:id/tool-content (CR-UI-15)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });

@@ -129,7 +129,9 @@ test.describe("CR-CORE-04 — Refresh button", () => {
     await page.getByRole("menuitem", { name: "Refresh" }).click();
 
     await expect(page.getByTestId("graph-status")).toHaveAttribute("data-node-count", "2"); // project + 1 session
-    await expect(page.getByRole("option", { name: /sudoku \(1 sessions\)/ })).toHaveCount(1);
+    // CR-CORE-06 (Sprint 8): the picker's session-count text is now singular at exactly 1 ("1
+    // session", not "1 sessions") — see ProjectPicker.tsx's `formatSessionCount`.
+    await expect(page.getByRole("option", { name: /sudoku \(1 session\)/ })).toHaveCount(1);
     await expect(page.locator(".project-stats dd")).toHaveText("1");
   });
 

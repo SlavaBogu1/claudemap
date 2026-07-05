@@ -24,6 +24,7 @@ describe("hasNotedDescendant on GET /api/projects/:id/sessions (CR-UI-28)", () =
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });

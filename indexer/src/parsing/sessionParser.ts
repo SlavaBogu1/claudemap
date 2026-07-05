@@ -2,6 +2,14 @@ import fs from "node:fs";
 import type { Logger } from "../logger.js";
 import type { ToolResultOverflowRecord } from "../types.js";
 
+/** (CR-CORE-05) One tracked file's latest known backup, accumulated across a session's snapshot lines. */
+export interface ParsedFileHistoryEntry {
+  filePath: string;
+  backupFileName: string;
+  version: number;
+  backupTime: string | null;
+}
+
 export interface ParsedSession {
   sessionId: string;
   startedAt: string | null;
@@ -21,6 +29,11 @@ export interface ParsedSession {
    * invoked in this session.
    */
   claudeMapNotes: string[];
+  /**
+   * (CR-CORE-05) Every unique file path ever backed up in this session, merged across all
+   * `file-history-snapshot` lines and keeping the highest `version` per path.
+   */
+  fileHistory: ParsedFileHistoryEntry[];
 }
 
 const COMMAND_TAG_RE = /<\/?(?:local-)?command-[a-z-]+>/gi;
@@ -62,6 +75,9 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
   const memoryTouches = new Set<string>();
   const overflows: ToolResultOverflowRecord[] = [];
   const claudeMapNotes: string[] = [];
+  // (CR-CORE-05) Keyed by file path; a later snapshot line can bump an existing path's version or
+  // introduce a new path — always keep the highest version seen per path across the whole session.
+  const fileHistoryByPath = new Map<string, ParsedFileHistoryEntry>();
 
   let firstUserText: string | null = null;
 
@@ -79,6 +95,32 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
     if (entry.cwd && !cwd) cwd = entry.cwd;
     if (entry.gitBranch) gitBranch = entry.gitBranch;
     if (entry.slug && !slug) slug = entry.slug;
+
+    if (entry.type === "file-history-snapshot") {
+      const backups = entry.snapshot?.trackedFileBackups;
+      if (backups && typeof backups === "object") {
+        for (const [trackedPath, meta] of Object.entries(backups as Record<string, any>)) {
+          const version = typeof meta?.version === "number" ? meta.version : 0;
+          const backupFileName = typeof meta?.backupFileName === "string" ? meta.backupFileName : null;
+          if (!backupFileName) {
+            logger.warn(
+              `Skipping file-history-snapshot entry with no backupFileName for '${trackedPath}' in ${filePath}`
+            );
+            continue;
+          }
+          const existing = fileHistoryByPath.get(trackedPath);
+          if (!existing || version > existing.version) {
+            fileHistoryByPath.set(trackedPath, {
+              filePath: trackedPath,
+              backupFileName,
+              version,
+              backupTime: typeof meta?.backupTime === "string" ? meta.backupTime : null
+            });
+          }
+        }
+      }
+      continue;
+    }
 
     const isMessage = entry.type === "user" || entry.type === "assistant";
     if (!isMessage) continue;
@@ -156,7 +198,8 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
     touchedMemory,
     memoryTouches: Array.from(memoryTouches),
     overflows,
-    claudeMapNotes
+    claudeMapNotes,
+    fileHistory: Array.from(fileHistoryByPath.values())
   };
 }
 

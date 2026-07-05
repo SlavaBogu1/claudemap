@@ -71,6 +71,7 @@ describe("GET /api/projects/:id/content (CR-UI-25)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });

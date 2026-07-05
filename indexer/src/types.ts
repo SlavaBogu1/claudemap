@@ -5,6 +5,24 @@ export interface ProjectEntry {
   lastActiveAt: string | null;
 }
 
+/**
+ * (v1.11, CR-CORE-06) One entry in `GET /api/projects/project-groups`'s cowork/chat buckets — `id`
+ * is the full pseudo-project id (e.g. `"cowork:<spaceId>"`, `"chat:<sessionId>"`), directly usable
+ * as `:id` against the existing per-project routes.
+ */
+export interface ProjectGroupEntry {
+  id: string;
+  name: string;
+  sessionCount: number;
+}
+
+/** (v1.11, CR-CORE-06) `GET /api/projects/project-groups`'s response — the Code/Cowork/Chat picker grouping. */
+export interface ProjectGroupsResponse {
+  code: ProjectGroupEntry[];
+  cowork: ProjectGroupEntry[];
+  chat: ProjectGroupEntry[];
+}
+
 export interface SessionEntry {
   id: string;
   startedAt: string | null;
@@ -16,6 +34,8 @@ export interface SessionEntry {
   touchedMemory: boolean;
   memoryTouchCount: number;
   toolResultCount: number;
+  /** (v1.10, CR-CORE-05) Count of unique files backed up during this session (file-history-snapshot). */
+  fileCount: number;
   /** (v1.8, CR-UI-28) True if this session or any subagent/memory-touch/tool sub-item has a note. */
   hasNotedDescendant: boolean;
 }
@@ -39,6 +59,19 @@ export interface ToolResultOverflowRecord {
   sessionId: string;
   toolUseId: string | null;
   filePath: string;
+}
+
+/**
+ * (v1.10, CR-CORE-05) One tracked file's latest backup for a session — merged from every
+ * `file-history-snapshot` line in that session's transcript, keeping the highest `version` per
+ * unique `filePath` (sessionParser.ts's accumulator).
+ */
+export interface FileHistoryRecord {
+  sessionId: string;
+  filePath: string;
+  backupFileName: string;
+  version: number;
+  backupTime: string | null;
 }
 
 export interface MemoryFileRecord {
@@ -67,10 +100,20 @@ export interface SessionDetailOverflow {
   filePath: string;
 }
 
+/** (v1.10, CR-CORE-05) One entry in `SessionDetail.files` — see `FileHistoryRecord`. */
+export interface SessionDetailFile {
+  filePath: string;
+  backupFileName: string;
+  version: number;
+  backupTime: string | null;
+}
+
 export interface SessionDetail {
   subagents: SessionDetailSubagent[];
   memoryTouches: SessionDetailMemoryTouch[];
   overflows: SessionDetailOverflow[];
+  /** (v1.10, CR-CORE-05) Files backed up during this session, one row per unique file path. */
+  files: SessionDetailFile[];
 }
 
 /**

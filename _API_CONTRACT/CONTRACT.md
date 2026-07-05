@@ -1,6 +1,6 @@
 # Indexer ↔ Visualizer API Contract
 
-**Owner:** Indexer team. **Version:** v1.9.
+**Owner:** Indexer team. **Version:** v1.12.
 Golden copy — the Visualizer reads this file directly; never copy it into `visualizer/`.
 Change workflow: `REQUIREMENTS/PRODUCT_OWNER_PROCESS.md` § Contract Change Workflow.
 
@@ -9,8 +9,10 @@ Sprint 1 (CR-CORE-01, CR-API-01, CR-CORE-02) implemented, plus hotfix `CR-API-02
 Sprint 2's `CR-UI-06` session detail endpoint, Sprint 3's `CR-UI-07` (session count fields) and
 `CR-UI-08` (notes + content endpoints, see below), Sprint 5's `CR-UI-15` (Agent Path field +
 Agent/Tool content endpoints), `CR-UI-25` (project content endpoint), and `CR-UI-28`
-(`hasNotedDescendant` aggregate), and Sprint 6's `CR-CORE-03` (claude-map notes, see below). All
-endpoints below are backed by an Express app bound to `127.0.0.1` only, port `4317`
+(`hasNotedDescendant` aggregate), Sprint 6's `CR-CORE-03` (claude-map notes, see below), and Sprint
+8's `CR-CORE-05` (file-history "File" drill-down type + content endpoint) and `CR-CORE-06` (Claude
+Desktop Cowork/Chat session indexing, see below). All endpoints below are backed by an Express app
+bound to `127.0.0.1` only, port `4317`
 (`REQUIREMENTS/SHARED_CONSTANTS.md`). Every `GET` endpoint triggers an incremental, mtime-based
 rescan (D13) before reading `index.db`, so responses reflect on-disk changes without a separate
 poll/rescan endpoint being required yet.
@@ -37,10 +39,60 @@ any custom roots persisted via `POST /api/projects/browse` (D20). Read-only, bac
   }
 ]
 ```
+**Unchanged by `CR-CORE-06` (v1.11):** this endpoint remains Code-projects-only — Cowork/Chat
+pseudo-projects are surfaced exclusively via `GET /api/projects/project-groups` below, never mixed
+into this response's shape or count.
+
+### `GET /api/projects/project-groups` (v1.11, `CR-CORE-06`)
+The Code/Cowork/Chat picker grouping (D26 — extends the picker's scope beyond Claude Code-only,
+per the approved grouped-dropdown mockup in `REQUIREMENTS/BACKLOG.md`'s `CR-CORE-06` entry).
+Read-only, backed by `index.db`. Registered as a static path on the same router as the `:id`-scoped
+routes below — never confused with them (none match a bare `project-groups` segment).
+
+A Claude Desktop session's `spaceId` field decides its kind (D26): present means **Cowork**, grouped
+by that Space's `name` (resolved from the sibling `spaces.json`); absent means **Chat**, one
+ungrouped pseudo-project per session (mirrors the approved mockup, where each Chat entry is its own
+row). Every `id` below is directly usable as `:id` against the existing per-project routes
+(`.../sessions`, `.../detail`, `.../content`) — Cowork Spaces and Chat sessions reuse that whole
+surface unmodified, no new session-content endpoints were needed.
+
+**Response 200** — `ProjectGroupsResponse`:
+```jsonc
+{
+  "code": [
+    { "id": "D--Fixture--ProjectOne", "name": "D:\\Fixture\\ProjectOne", "sessionCount": 3 }
+  ],
+  "cowork": [
+    { "id": "cowork:e7a25428-e16f-4c74-a356-c8965830cf0d", "name": "EW market", "sessionCount": 12 }
+  ],
+  "chat": [
+    { "id": "chat:local_c6462ffa-6b89-453e-ad14-7b150625339a", "name": "Write Team Experience Summary", "sessionCount": 1 }
+  ]
+}
+```
+`code` is `GET /api/projects`'s data re-shaped to `{id, name, sessionCount}` (`name` = that
+endpoint's `path`) — same Code-projects-only scope, nothing new discovered here.
+
+**Note on `sessionKind`:** the CR text describes tagging each session `sessionKind: "cowork" |
+"chat"` — this is captured in the data model (which pseudo-project/group a session's row belongs to)
+and exposed at this grouping level, rather than as a literal duplicate field on every entry in
+`GET /api/projects/:id/sessions`'s response; a session's kind is already known once the caller has
+picked a group here.
 
 ### `GET /api/projects/:id/sessions`
 Lists every top-level session for one project (`:id` = the `id` from `GET /api/projects`).
 Read-only, backed by `index.db`.
+
+**(v1.11, `CR-CORE-06`)** `:id` also accepts a Cowork/Chat pseudo-project id from
+`GET /api/projects/project-groups` (`"cowork:<spaceId>"` / `"chat:<sessionId>"`) — this endpoint and
+`.../detail`/`.../content` below all work unmodified for them. `messageCount` for a Cowork/Chat
+session counts only its top-level `user`/`assistant` `audit.jsonl` entries (a nested sub-conversation
+entry, tagged `parent_tool_use_id`, is excluded — this format inlines those in the same file rather
+than a separate transcript like Claude Code's subagents). `subagentCount`/`touchedMemory`/
+`memoryTouchCount`/`toolResultCount`/`fileCount` are always `0`/`false` for these sessions this
+sprint — the IX-8.5 on-disk investigation found real subagent/memory/tool-overflow equivalents in
+this format but parity wasn't built yet (do not assume parity — see
+`indexer/requirements/SPRINT8_REPORT.md`).
 
 **Response 200** — `SessionEntry[]`:
 ```jsonc
@@ -56,11 +108,14 @@ Read-only, backed by `index.db`.
     "touchedMemory": true,
     "memoryTouchCount": 1,   // (v1.4, CR-UI-07) COUNT(*) over session_memory_touches for this session
     "toolResultCount": 1,    // (v1.4, CR-UI-07) COUNT(*) over tool_result_overflows for this session
-    "hasNotedDescendant": true // (v1.8, CR-UI-28) true if this session or any of its subagent/
+    "hasNotedDescendant": true, // (v1.8, CR-UI-28) true if this session or any of its subagent/
                                 // memory-touch/tool sub-items has a saved note (see Notes below) —
                                 // computed even for a session that has never been drilled down into
                                 // via .../detail, so the client doesn't need to eagerly expand every
                                 // session just to know whether to show the note badge on it.
+    "fileCount": 2 // (v1.10, CR-CORE-05) count of unique files backed up during the session
+                   // (file-history-snapshot entries, deduped by file path, keeping the highest
+                   // version per path) — 0 for a session with no such entries or only empty ones.
   }
 ]
 ```
@@ -95,11 +150,19 @@ the tool calls whose results overflowed to disk — for drill-down beyond the ag
   ],
   "overflows": [
     { "toolUseId": "toolu_big1", "filePath": "D:\\...\\session-bbb\\tool-results\\toolu_big1.txt" }
+  ],
+  "files": [
+    { // (v1.10, CR-CORE-05) one row per unique file path ever backed up in this session
+      "filePath": "backend\\tests\\test_auth.py", // original tracked-file path, OS-native separators
+      "backupFileName": "0087446fcc94a7fb@v2", // identifier for GET .../file-content, NOT a raw path
+      "version": 2, // highest version seen for this path across all file-history-snapshot lines
+      "backupTime": "2026-06-02T09:05:00.000Z"
+    }
   ]
 }
 ```
-A session with no subagents, memory touches, or overflows returns all three arrays empty — not an
-error.
+A session with no subagents, memory touches, overflows, or file backups returns all four arrays
+empty — not an error.
 
 **Response 404** (unknown `:id` or unknown `:sessionId` within that project):
 `{ "error": "Unknown project id: <id>" }` or `{ "error": "Unknown session id: <sessionId>" }`
@@ -117,6 +180,11 @@ session's `.jsonl` directly (not cached in `index.db`). `tool_use`/`tool_result`
 skipped (already represented structurally via `GET .../detail`, not re-served here as raw text); a
 message with no extractable text (e.g. an assistant turn that is only a tool call) is omitted
 entirely, not returned as an empty string.
+
+**(v1.11, `CR-CORE-06`)** Works unmodified for a Cowork/Chat session (parses its `audit.jsonl`): a
+nested sub-conversation turn (`parent_tool_use_id` set) is excluded, same as the message-count
+rule above; `timestamp` falls back to the entry's `_audit_timestamp` field when the Claude-Code-style
+top-level `timestamp` field is absent.
 
 **Response 200** — `{ messages: SessionContentMessage[] }`:
 ```jsonc
@@ -184,6 +252,37 @@ against that project's known `tool_result_overflows.file_path` values (a DB look
 `{ "error": "'<path>' is not a known tool result file for project '<id>'." }`
 
 **Response 404** (unknown `:id`): `{ "error": "Unknown project id: <id>" }`
+
+### `GET /api/projects/:id/file-content?path=<sessionId>/<backupFileName>` (v1.10, CR-CORE-05; path
+format revised v1.12, CR-CORE-05 re-validation fix)
+Returns the raw text of one file-history backup — a session's snapshot of a tracked file at a given
+version, read from `{defaultFileHistoryRoot()}/{sessionId}/{backupFileName}` (`{CLAUDE_HOME}/
+file-history/`, keyed by session UUID, a sibling of `projects/`). **`path` is the relative two-segment
+identifier `{sessionId}/{backupFileName}`** — NOT a full filesystem path (this endpoint is different
+from `memory-content`/`agent-content`/`tool-content` on this specific point: those three endpoints'
+data sources already hand the client a ready-made absolute path field it can pass straight back
+— e.g. `.../detail`'s `subagents[].filePath` — but `.../detail`'s `files[]` array only ever exposes
+`backupFileName`, an opaque identifier, never a full path; the file-history root's real on-disk
+location is server-side-only information the client has no way to construct). Build `path` as
+`${sessionId}/${backupFileName}`, e.g. `session-bbb/0087446fcc94a7fb@v2` — `sessionId` is the session
+id the file was backed up under, `backupFileName` is the exact string from `.../detail`'s `files[]`
+entry for it. The server resolves the full filesystem path itself.
+
+**Security requirement, non-negotiable:** `path` must decompose into exactly two non-empty segments
+with no `.`/`..` traversal segment (`{sessionId}/{backupFileName}`); `sessionId` must be a real,
+indexed session for `:id`; and `backupFileName` must be a known `file_history_entries.backup_file_name`
+for that session (a DB lookup) — all validated *before* anything is read from disk, then the server
+joins the validated segments onto its own `fileHistoryRoot` to read the file. A malformed/wrong-shaped
+`path`, a well-formed but never-indexed backup filename, or a real backup filename paired with the
+wrong session id are all rejected the same way.
+
+**Response 200:** `{ "content": "def test_auth():\n    assert True\n" }`
+
+**Response 400** (missing `path`, `path` doesn't decompose to a known `{sessionId}/{backupFileName}`
+pair for `:id`): `{ "error": "'<path>' is not a known file-history backup for project '<id>'." }`
+
+**Response 404** (unknown `:id`, or the indexed backup's file has since been removed from disk):
+`{ "error": "Unknown project id: <id>" }` or `{ "error": "File backup no longer exists on disk: '<path>'." }`
 
 ### `GET /api/projects/:id/content` (v1.7, CR-UI-25)
 Returns project-level content for the project node itself, resolved server-side in priority order:
@@ -317,6 +416,41 @@ future packaged desktop shell), add that origin to `ALLOWED_ORIGINS` in `indexer
 it's a plain array, no other code changes needed.
 
 ## Changelog
+- **v1.12** (2026-07-04, Sprint 8, `CR-CORE-05` re-validation fix) — Changed
+  `GET /api/projects/:id/file-content`'s `path` query param from a full filesystem path to the
+  relative two-segment identifier `{sessionId}/{backupFileName}`. Root cause: the Visualizer had no
+  way to construct a full absolute path for this endpoint (unlike `memory-content`/`agent-content`/
+  `tool-content`, `.../detail`'s `files[]` array never exposes one, only the opaque `backupFileName`),
+  so the originally-documented full-path contract was unimplementable client-side — see
+  `tester/requirements/SPRINT8_VALIDATION_REPORT.md` Defect 1 and `REQUIREMENTS/BACKLOG.md`'s
+  `CR-CORE-05` fail note. Server-side only: validates the same `{sessionId}/{backupFileName}` shape
+  it always required (still exactly two segments, still DB-checked before any disk read), then joins
+  those validated segments onto its own `fileHistoryRoot` instead of range-checking a client-supplied
+  absolute path. No change to any other endpoint/schema.
+- **v1.11** (2026-07-04, Sprint 8, `CR-CORE-06`) — Added `GET /api/projects/project-groups`
+  (Code/Cowork/Chat picker grouping, D26 — extends the picker beyond Claude Code-only). Claude
+  Desktop Cowork/Chat sessions (`%APPDATA%\Claude\local-agent-mode-sessions\`) are indexed as
+  `kind`-tagged pseudo-project rows in the same `projects`/`sessions` tables as Code projects (a new
+  `projects.kind` column, default `'code'`) — `GET /api/projects` is filtered to `kind = 'code'` and
+  is therefore completely unchanged in shape/scope; Cowork/Chat pseudo-project ids
+  (`"cowork:<spaceId>"` / `"chat:<sessionId>"`) are usable directly against every existing
+  `:id`-scoped route (`.../sessions`, `.../detail`, `.../content`), which now also work for them (see
+  the notes on those endpoints above) — no new session-content endpoints were needed. A session's
+  `spaceId` field decides Cowork (grouped by that Space's `spaces.json` name) vs. Chat (D26).
+  `subagentCount`/`memoryTouchCount`/`toolResultCount`/`fileCount` are always `0`/`false` for these
+  sessions this sprint (investigation-confirmed real equivalents exist in this data source but parity
+  wasn't built yet — see `indexer/requirements/SPRINT8_REPORT.md`). No changes to any existing
+  endpoint/schema beyond the additive `projects.kind` column and the `GET /api/projects` scope filter
+  (behaviorally a no-op for existing data, since every pre-v1.11 row was implicitly Code).
+- **v1.10** (2026-07-04, Sprint 8, `CR-CORE-05`) — Added `fileCount` (integer, unique files backed up
+  this session) to `GET /api/projects/:id/sessions`; added a `files: [{filePath, backupFileName,
+  version, backupTime}]` array to `GET .../sessions/:sessionId/detail` (one row per unique tracked
+  file path, highest `version` kept when a path was backed up more than once — parsed from
+  top-level `file-history-snapshot` JSONL lines, merged across every such line in the session); added
+  `GET /api/projects/:id/file-content?path=<filePath>` (raw backup text, path validated against a
+  known indexed `file_history_entries.backup_file_name` for the derived session id before ever
+  touching disk, same security pattern as `memory-content`/`agent-content`/`tool-content`). No
+  changes to any existing endpoint/schema beyond the additive `fileCount` field and `files` array.
 - **v1.9** (2026-07-03, Sprint 6, `CR-CORE-03`) — Added `GET /api/projects/:id/claude-map-notes`
   (read-only; no `PUT`/`DELETE` — this content has no client-facing write path). Backed by a new
   `claude_map_notes` table in `annotations.db` (durable user data, D16), separate from and never

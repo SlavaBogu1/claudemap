@@ -5,13 +5,26 @@ import type { AnnotationsDb } from "../db/annotationsDb.js";
 import { createProjectsRouter } from "./routes/projects.js";
 import { consoleLogger, type Logger } from "../logger.js";
 import { defaultOpenFolder, type OpenFolderFn } from "./openFolder.js";
-import { ALLOWED_ORIGINS } from "../config.js";
+import { ALLOWED_ORIGINS, defaultDesktopSessionsRoot, defaultFileHistoryRoot } from "../config.js";
 
 export interface CreateAppOptions {
   indexDb: IndexDb;
   annotationsDb: AnnotationsDb;
   /** The default {CLAUDE_HOME}/projects root (or a candidate CLAUDE_HOME-like path) to scan. */
   defaultProjectsRoot: string;
+  /**
+   * (v1.10, CR-CORE-05) The `{CLAUDE_HOME}/file-history` root backups are read from — injectable so
+   * tests can point it at a fixture directory instead of a real `~/.claude/file-history`. Defaults
+   * to `defaultFileHistoryRoot()` when omitted.
+   */
+  fileHistoryRoot?: string;
+  /**
+   * (v1.11, CR-CORE-06) The `{CLAUDE_DESKTOP_HOME}/local-agent-mode-sessions` root Cowork/Chat
+   * sessions are discovered from — injectable so tests can point it at a fixture directory instead
+   * of a real `%APPDATA%\Claude\local-agent-mode-sessions`. Defaults to
+   * `defaultDesktopSessionsRoot()` when omitted.
+   */
+  desktopSessionsRoot?: string;
   /** Injectable for tests — never shells out in the automated suite. */
   openFolder?: OpenFolderFn;
   logger?: Logger;
@@ -53,6 +66,8 @@ export function createApp(options: CreateAppOptions): Express {
       indexDb: options.indexDb,
       annotationsDb: options.annotationsDb,
       defaultProjectsRoot: options.defaultProjectsRoot,
+      fileHistoryRoot: options.fileHistoryRoot ?? defaultFileHistoryRoot(),
+      desktopSessionsRoot: options.desktopSessionsRoot ?? defaultDesktopSessionsRoot(),
       openFolder: options.openFolder ?? defaultOpenFolder,
       logger: options.logger ?? consoleLogger
     })

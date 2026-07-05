@@ -256,14 +256,18 @@ function layoutOptionsFor(
 
         if (!childClusterCache) {
           childClusterCache = {};
-          // CR-UI-16: grouped per parent AND per type (fixed Memory/Subagent/Tool row order) —
-          // still built once per layout run, grouping the full sibling set present in Cytoscape at
-          // that moment, same as CR-UI-09's original per-parent-only grouping.
-          const byParent = new Map<string, { memory: string[]; subagent: string[]; tool: string[] }>();
+          // CR-UI-16: grouped per parent AND per type (fixed Memory/Subagent/Tool/File row order,
+          // CR-CORE-05 appends File as a 4th row) — still built once per layout run, grouping the
+          // full sibling set present in Cytoscape at that moment, same as CR-UI-09's original
+          // per-parent-only grouping.
+          const byParent = new Map<
+            string,
+            { memory: string[]; subagent: string[]; tool: string[]; file: string[] }
+          >();
           node.cy().nodes('[parentSessionId]').forEach((childNode: NodeSingular) => {
             const pId = childNode.data("parentSessionId") as string;
-            const type = childNode.data("type") as "memory" | "subagent" | "tool";
-            const groups = byParent.get(pId) ?? { memory: [], subagent: [], tool: [] };
+            const type = childNode.data("type") as "memory" | "subagent" | "tool" | "file";
+            const groups = byParent.get(pId) ?? { memory: [], subagent: [], tool: [], file: [] };
             groups[type].push(childNode.id());
             byParent.set(pId, groups);
           });
@@ -276,6 +280,7 @@ function layoutOptionsFor(
                 { ids: groups.memory },
                 { ids: groups.subagent },
                 { ids: groups.tool },
+                { ids: groups.file },
               ]),
             );
           }
@@ -314,6 +319,10 @@ interface CanvasPalette {
   memoryText: string;
   toolBg: string;
   toolText: string;
+  // CR-CORE-05 (Sprint 8): 4th drill-down type — distinct color from subagent (blue)/memory
+  // (yellow)/tool (gray).
+  fileBg: string;
+  fileText: string;
   selectedBorder: string;
   edgeLine: string;
   // CR-UI-33 (Sprint 6): red->green gradient endpoints for the "Session color scheme" preference —
@@ -335,6 +344,8 @@ const LIGHT_PALETTE: CanvasPalette = {
   memoryText: "#08060d",
   toolBg: "#9a97a1",
   toolText: "#08060d",
+  fileBg: "#2e9e44",
+  fileText: "#fff",
   selectedBorder: "#aa3bff",
   edgeLine: "#c9c7cf",
   gradientLow: "#d64545",
@@ -353,6 +364,8 @@ const DARK_PALETTE: CanvasPalette = {
   memoryText: "#16171d",
   toolBg: "#9a97a1",
   toolText: "#16171d",
+  fileBg: "#4caf50",
+  fileText: "#16171d",
   selectedBorder: "#c084fc",
   edgeLine: "#565a68",
   gradientLow: "#ef5350",
@@ -507,6 +520,18 @@ function buildStylesheet(
       },
     },
     {
+      // CR-CORE-05 (Sprint 8): 4th drill-down type — hexagon, distinct from subagent (diamond),
+      // memory (star), and tool (rectangle).
+      selector: 'node[type = "file"]',
+      style: {
+        shape: "hexagon",
+        "background-color": palette.fileBg,
+        color: palette.fileText,
+        width: 56,
+        height: 56,
+      },
+    },
+    {
       selector: "node.selected",
       style: {
         "border-width": 3,
@@ -633,7 +658,9 @@ export function buildGraphElements(
 
 // CR-UI-07 (Sprint 3): the three drill-down child types, now independently toggleable per banner
 // (previously an all-or-nothing expand via CR-UI-06's session-body click).
-export type DrillDownType = "subagent" | "memory" | "tool";
+// CR-CORE-05 (Sprint 8): "file" added — a 4th drill-down type, sourced from `detail.files` (unique
+// tracked file paths backed up during the session).
+export type DrillDownType = "subagent" | "memory" | "tool" | "file";
 
 // CR-UI-06 (Sprint 2): child nodes added below a session node on expand, one per subagent/memory
 // touch/tool-result-overflow file, per the approved mockup. Pure + exported so expand-state fan-out
@@ -649,7 +676,8 @@ export type DrillDownType = "subagent" | "memory" | "tool";
 // function's own composite Cytoscape node id (`${sessionId}:<type>:<rawId>`, needed for uniqueness
 // across sessions on the canvas).
 // CR-UI-08: maps the Visualizer's internal Cytoscape node `type` value to the notes/content API's
-// `NodeType` vocabulary — they differ for one case ("memory" vs "memoryTouch").
+// `NodeType` vocabulary — they differ for one case ("memory" vs "memoryTouch"). CR-CORE-05: "file"
+// maps to itself, no rename, same as "subagent"/"tool".
 export function toApiNodeType(type: DrillDownType): NodeType {
   return type === "memory" ? "memoryTouch" : type;
 }
@@ -699,6 +727,15 @@ export function buildChildElements(
   if (include("tool")) {
     detail.overflows.forEach((o) => {
       addChild(`${sessionId}:tool:${o.toolUseId}`, `⚙ Tool log`, "tool", o.toolUseId, o.filePath);
+    });
+  }
+  // CR-CORE-05 (Sprint 8): 4th drill-down type, same per-type-row pattern as the three above.
+  // `rawId` is the original tracked-file path (like memory's, for note-key stability across
+  // re-versioning); `filePath` here carries `backupFileName` (see `SelectedGraphItem.filePath`'s
+  // doc comment in types.ts) — the identifier `GET .../file-content` needs alongside `sessionId`.
+  if (include("file")) {
+    detail.files.forEach((f) => {
+      addChild(`${sessionId}:file:${f.filePath}`, `💾 File`, "file", f.filePath, f.backupFileName);
     });
   }
 
@@ -753,6 +790,17 @@ export function GraphCanvas({
   const [appliedLayout, setAppliedLayout] = useState<LayoutName>(layout);
   const pendingLayoutRef = useRef<LayoutName>(layout);
   pendingLayoutRef.current = layout;
+  // CR-UI-36 (Sprint 8): test/observability hook only — a monotonically increasing count of
+  // "layoutstop" events, exposed via `graph-status`'s `data-layout-run` below. An externally
+  // attached `cy.one("layoutstop", ...)` listener (attempted first) is not reliable here: the `cy`
+  // callback prop below runs `cy.off("layoutstop")` (unnamespaced) on every re-render — including
+  // the one triggered mid-flight by a drill-down expand's own `setExpandedTypes`/`setSessionDetails`
+  // calls — which silently strips any listener attached from outside this component before it ever
+  // fires. Tracking the count as React state *inside* the same handler that already survives every
+  // re-render (see `appliedLayout` above, proven reliable by existing tests already waiting on
+  // `data-layout`) lets a test wait for "at least one more layout run happened" (e.g. via
+  // `waitForNextLayoutRun` in `e2e/fixtures.ts`) without racing that same teardown/re-attach cycle.
+  const [layoutRunCount, setLayoutRunCount] = useState(0);
 
   // CR-UI-07 (Sprint 3): which drill-down TYPES are expanded per session (replaces CR-UI-06's
   // all-or-nothing `expandedSessionIds` — each banner now toggles only its own type), and the
@@ -831,12 +879,41 @@ export function GraphCanvas({
     setNoteBadgePositions(next);
   }
 
-  // CR-UI-18: recomputes both overlays together — reuses the banner layer's existing event wiring
-  // (pan/zoom/position/layoutstop, see the `cy` callback below) rather than registering a second,
-  // duplicate set of listeners just for badges.
+  // CR-CORE-05 (Sprint 8): on-screen position (+ count) for the bottom-left File badge — modeled on
+  // `recomputeNoteBadgePositions`' corner math above, mirrored to the opposite corner. A different
+  // visual slot from the top `bannerPositions` row (CR-UI-07): presence-only (hidden at `fileCount`
+  // === 0), not gated by the `showBanners` preference, same independence as the note-badge overlay.
+  const [fileBadgePositions, setFileBadgePositions] = useState<
+    Map<string, { x: number; y: number; count: number }>
+  >(new Map());
+
+  function recomputeFileBadgePositions(cy: Core) {
+    const next = new Map<string, { x: number; y: number; count: number }>();
+    const sessionsById = new Map(sessions.map((s) => [s.id, s]));
+    cy.nodes('[type = "session"]').forEach((node: NodeSingular) => {
+      const session = sessionsById.get(node.id());
+      if (!session || session.fileCount <= 0) return;
+      const pos = node.renderedPosition();
+      const halfWidth = node.renderedOuterWidth() / 2;
+      const halfHeight = node.renderedOuterHeight() / 2;
+      // Bottom-left corner (mirrors the note-badge's bottom-right), nudged inward by the same
+      // offset so it visually sits on the corner instead of floating fully outside the shape.
+      next.set(node.id(), {
+        x: pos.x - halfWidth + NOTE_BADGE_INWARD_OFFSET,
+        y: pos.y + halfHeight - NOTE_BADGE_INWARD_OFFSET,
+        count: session.fileCount,
+      });
+    });
+    setFileBadgePositions(next);
+  }
+
+  // CR-UI-18: recomputes all overlays together — reuses the banner layer's existing event wiring
+  // (pan/zoom/position/layoutstop, see the `cy` callback below) rather than registering further
+  // duplicate listeners just for badges. CR-CORE-05: the File badge joins this shared recompute.
   function recomputeOverlays(cy: Core) {
     recomputeBannerPositions(cy);
     recomputeNoteBadgePositions(cy);
+    recomputeFileBadgePositions(cy);
   }
 
   const baseElements: ElementDefinition[] = useMemo(
@@ -1038,6 +1115,7 @@ export function GraphCanvas({
       subagent: detail.subagents.length,
       memory: detail.memoryTouches.length,
       tool: detail.overflows.length,
+      file: detail.files.length,
     };
     if (countFor[type] === 0) return;
 
@@ -1053,12 +1131,14 @@ export function GraphCanvas({
   // CR-UI-07 (reopen, Sprint 4): restores the session-body-click expand-all/collapse-all toggle
   // (CR-UI-06's original all-or-nothing gesture, removed by CR-UI-07's per-banner-only change) as an
   // ADDITION alongside the still-independent per-banner single-type toggles above — not a
-  // replacement. Body click: expand all 3 types if any are currently missing (regardless of whether
+  // replacement. Body click: expand all types if any are currently missing (regardless of whether
   // the present ones got there via the body or their own banner), or collapse to empty only when all
-  // 3 are already present. Unlike `toggleBannerType`, this doesn't skip a zero-count type — it still
-  // adds it to the expanded set for consistency with "all 3", but `buildChildElements`/the `elements`
+  // are already present. Unlike `toggleBannerType`, this doesn't skip a zero-count type — it still
+  // adds it to the expanded set for consistency with "all", but `buildChildElements`/the `elements`
   // memo above render nothing extra for it either way (an empty array `.forEach` is a no-op).
-  const ALL_DRILLDOWN_TYPES: DrillDownType[] = ["subagent", "memory", "tool"];
+  // CR-CORE-05 (Sprint 8): "file" added as a 4th type — body-click expand-all/collapse-all now
+  // covers it too, alongside the dedicated File-badge click (`toggleBannerType(id, "file")` below).
+  const ALL_DRILLDOWN_TYPES: DrillDownType[] = ["subagent", "memory", "tool", "file"];
   async function toggleAllTypesForSession(sessionId: string) {
     const current = expandedTypes.get(sessionId);
     const allExpanded = ALL_DRILLDOWN_TYPES.every((t) => current?.has(t));
@@ -1188,7 +1268,7 @@ export function GraphCanvas({
                 sessionId: node.id(),
               });
               void toggleAllTypesForSession(node.id());
-            } else if (type === "subagent" || type === "memory" || type === "tool") {
+            } else if (type === "subagent" || type === "memory" || type === "tool" || type === "file") {
               // CR-UI-08: drill-down child nodes are now selectable too (previously inert), driving
               // the Detail panel's Content tab for whichever item type is clicked.
               // CR-UI-04: `sessionId` here is the child's *parent* session's id (`parentSessionId`)
@@ -1200,7 +1280,9 @@ export function GraphCanvas({
                 label: node.data("label"),
                 sessionId: node.data("parentSessionId") as string,
                 // CR-UI-15: "Agent Path"/"Tool Path" data + the Content tab's Agent/Tool fetch —
-                // undefined for memory (its `rawId` above already is the file path).
+                // undefined for memory (its `rawId` above already is the file path). CR-CORE-05:
+                // "File Path" + the Content tab's file fetch reuse the same field, carrying
+                // `backupFileName` (see `SelectedGraphItem.filePath`'s doc comment in types.ts).
                 filePath: node.data("filePath") as string | undefined,
               });
             } else if (type === "project") {
@@ -1210,6 +1292,9 @@ export function GraphCanvas({
           cy.off("layoutstop");
           cy.on("layoutstop", () => {
             setAppliedLayout(pendingLayoutRef.current);
+            // CR-UI-36: see `layoutRunCount`'s declaration above for why this lives here rather
+            // than an externally-attached listener.
+            setLayoutRunCount((c) => c + 1);
             // CR-UI-29: apply the cascade Z-index as a real Cytoscape node style after every
             // Timeline layout run — `positions`-style preset layouts only set position, never
             // style, so this can't be folded into `layoutOptionsFor` itself.
@@ -1241,6 +1326,14 @@ export function GraphCanvas({
           {sessions.map((s) => {
             const pos = bannerPositions.get(s.id);
             if (!pos) return null;
+            // CR-UI-07 (reopened 2026-07-04): each banner is now conditionally rendered — only
+            // included when its own count is > 0. A session with all three counts at 0 renders no
+            // banner row at all, matching the note-badge's presence-only convention (see
+            // `CR-CORE-05`'s File badge below, which adopts the same convention from the start).
+            const showMemory = s.memoryTouchCount > 0;
+            const showSubagent = s.subagentCount > 0;
+            const showTool = s.toolResultCount > 0;
+            if (!showMemory && !showSubagent && !showTool) return null;
             return (
               <div
                 key={s.id}
@@ -1252,36 +1345,42 @@ export function GraphCanvas({
                 {/* CR-UI-31: tabIndex={-1} removes these from the native Tab order (the roving
                     tabindex above owns Tab/Shift+Tab over project/session nodes only) while
                     leaving mouse-click behavior completely unchanged. */}
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className="session-banner session-banner-memory"
-                  data-banner="memory"
-                  aria-label={`Memory touches: ${s.memoryTouchCount}. Click to toggle.`}
-                  onClick={() => void toggleBannerType(s.id, "memory")}
-                >
-                  ★ {s.memoryTouchCount}
-                </button>
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className="session-banner session-banner-subagent"
-                  data-banner="subagent"
-                  aria-label={`Subagents: ${s.subagentCount}. Click to toggle.`}
-                  onClick={() => void toggleBannerType(s.id, "subagent")}
-                >
-                  ◆ {s.subagentCount}
-                </button>
-                <button
-                  type="button"
-                  tabIndex={-1}
-                  className="session-banner session-banner-tool"
-                  data-banner="tool"
-                  aria-label={`Tool results: ${s.toolResultCount}. Click to toggle.`}
-                  onClick={() => void toggleBannerType(s.id, "tool")}
-                >
-                  ⚙ {s.toolResultCount}
-                </button>
+                {showMemory && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className="session-banner session-banner-memory"
+                    data-banner="memory"
+                    aria-label={`Memory touches: ${s.memoryTouchCount}. Click to toggle.`}
+                    onClick={() => void toggleBannerType(s.id, "memory")}
+                  >
+                    ★ {s.memoryTouchCount}
+                  </button>
+                )}
+                {showSubagent && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className="session-banner session-banner-subagent"
+                    data-banner="subagent"
+                    aria-label={`Subagents: ${s.subagentCount}. Click to toggle.`}
+                    onClick={() => void toggleBannerType(s.id, "subagent")}
+                  >
+                    ◆ {s.subagentCount}
+                  </button>
+                )}
+                {showTool && (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    className="session-banner session-banner-tool"
+                    data-banner="tool"
+                    aria-label={`Tool results: ${s.toolResultCount}. Click to toggle.`}
+                    onClick={() => void toggleBannerType(s.id, "tool")}
+                  >
+                    ⚙ {s.toolResultCount}
+                  </button>
+                )}
               </div>
             );
           })}
@@ -1303,6 +1402,30 @@ export function GraphCanvas({
           </span>
         ))}
       </div>
+      {/* CR-CORE-05 (Sprint 8): bottom-left corner badge overlay for the File drill-down type — a
+          DIFFERENT visual slot from the top `.session-banner-layer` row above (CR-UI-07): modeled on
+          CR-UI-18's note-badge overlay (mirrored to the opposite corner), independent of the
+          `showBanners` preference, hidden entirely when a session's `fileCount` is 0. Unlike the
+          note-badge, this one IS clickable (acceptance: "clicking the File badge expands File child
+          nodes") — a real `<button>`, `pointer-events: auto`, reusing `toggleBannerType` exactly
+          like the top banners do. */}
+      <div className="file-badge-layer">
+        {[...fileBadgePositions.entries()].map(([sessionId, pos]) => (
+          <button
+            key={sessionId}
+            type="button"
+            tabIndex={-1}
+            className="file-badge"
+            data-testid="file-badge"
+            data-session-id={sessionId}
+            aria-label={`Files: ${pos.count}. Click to toggle.`}
+            style={{ left: pos.x, top: pos.y }}
+            onClick={() => void toggleBannerType(sessionId, "file")}
+          >
+            💾 {pos.count}
+          </button>
+        ))}
+      </div>
       {/* Visually hidden test hook — not part of the approved mockup (D6). Lets Playwright assert
           node count and the currently-applied Cytoscape layout without pixel diffing or reaching
           into canvas internals. */}
@@ -1311,6 +1434,7 @@ export function GraphCanvas({
         data-testid="graph-status"
         data-node-count={elements.filter((e) => !("source" in e.data)).length}
         data-layout={appliedLayout}
+        data-layout-run={layoutRunCount}
       />
     </div>
   );

@@ -26,6 +26,7 @@ describe("Notes CRUD (CR-UI-08)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });
@@ -166,6 +167,7 @@ describe("notes table survives an index.db rescan/rebuild untouched (D16)", () =
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });
@@ -200,6 +202,7 @@ describe("notes table survives an index.db rescan/rebuild untouched (D16)", () =
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });

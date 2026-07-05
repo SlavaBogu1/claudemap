@@ -36,6 +36,7 @@ const session: Session = {
   memoryTouchCount: 1,
   toolResultCount: 0,
   hasNotedDescendant: false,
+  fileCount: 0,
 };
 
 describe("DetailPanel", () => {

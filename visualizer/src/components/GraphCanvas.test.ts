@@ -32,6 +32,7 @@ function makeSessions(count: number): Session[] {
     memoryTouchCount: 0,
     toolResultCount: 0,
     hasNotedDescendant: false,
+    fileCount: 0,
   }));
 }
 
@@ -67,6 +68,7 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
       ],
       memoryTouches: [{ filePath: "memory/PLAN.md", name: "PLAN.md" }],
       overflows: [{ toolUseId: "tool_x", filePath: "overflow/tool_x.txt" }],
+      files: [],
     };
     const elements = buildChildElements("s0", detail);
     const nodes = elements.filter((e) => !("source" in e.data));
@@ -81,6 +83,31 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
     expect(edges.every((e) => e.data.source === "s0")).toBe(true);
   });
 
+  it("CR-CORE-05: adds a File child node per unique tracked file path, distinct type/label/rawId/filePath", () => {
+    const detail: SessionDetail = {
+      subagents: [],
+      memoryTouches: [],
+      overflows: [],
+      files: [
+        {
+          filePath: "backend\\tests\\test_auth.py",
+          backupFileName: "0087446fcc94a7fb@v2",
+          version: 2,
+          backupTime: "2026-06-12T00:57:40.318Z",
+        },
+      ],
+    };
+    const nodes = buildChildElements("s0", detail).filter((e) => !("source" in e.data));
+    expect(nodes).toHaveLength(1);
+    const [fileNode] = nodes;
+    expect(fileNode.data.type).toBe("file");
+    expect(fileNode.data.label).toBe("💾 File");
+    // rawId is the stable original tracked-file path (note-key stability across re-versioning);
+    // filePath carries the version-specific backupFileName (content-fetch identifier).
+    expect(fileNode.data.rawId).toBe("backend\\tests\\test_auth.py");
+    expect(fileNode.data.filePath).toBe("0087446fcc94a7fb@v2");
+  });
+
   it("CR-UI-22: uses the simplified fixed label text for each drill-down type — no agent type/filename in-label", () => {
     const detail: SessionDetail = {
       subagents: [
@@ -88,6 +115,7 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
       ],
       memoryTouches: [{ filePath: "memory/PLAN.md", name: "PLAN.md" }],
       overflows: [{ toolUseId: "tool_x", filePath: "C:\\overflow\\tool_x.txt" }],
+      files: [],
     };
     const nodes = buildChildElements("s0", detail).filter((e) => !("source" in e.data));
     const [subagentNode, memoryNode, toolNode] = nodes;
@@ -103,6 +131,7 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
       ],
       memoryTouches: [{ filePath: "memory/PLAN.md", name: "PLAN.md" }],
       overflows: [{ toolUseId: "tool_x", filePath: "overflow/tool_x.txt" }],
+      files: [],
     };
     const nodes = buildChildElements("s0", detail).filter((e) => !("source" in e.data));
     const [subagentNode, memoryNode, toolNode] = nodes;
@@ -115,7 +144,7 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
   });
 
   it("adds zero elements for a session with no substructure", () => {
-    const detail: SessionDetail = { subagents: [], memoryTouches: [], overflows: [] };
+    const detail: SessionDetail = { subagents: [], memoryTouches: [], overflows: [], files: [] };
     expect(buildChildElements("s0", detail)).toHaveLength(0);
   });
 
@@ -124,6 +153,7 @@ describe("buildChildElements (VZ-2.3 drill-down)", () => {
       subagents: [],
       memoryTouches: [{ filePath: "C:\\Users\\me\\memory\\deleted-topic.md", name: null }],
       overflows: [],
+      files: [],
     };
     const [memoryNode] = buildChildElements("s0", detail).filter((e) => !("source" in e.data));
     expect(memoryNode.data.label).toBe("★ Memory");
@@ -274,6 +304,7 @@ describe("computeTimelinePositions (CR-UI-29 cascade-stack)", () => {
       memoryTouchCount: 0,
       toolResultCount: 0,
       hasNotedDescendant: false,
+      fileCount: 0,
     };
   }
 
@@ -373,6 +404,7 @@ describe("computeTimelinePositions (CR-UI-29 reopened 2026-07-04: local-vs-UTC d
       memoryTouchCount: 0,
       toolResultCount: 0,
       hasNotedDescendant: false,
+      fileCount: 0,
     };
   }
 
@@ -449,6 +481,7 @@ describe("CR-UI-33 gradient color helpers", () => {
       memoryTouchCount: 0,
       toolResultCount: 0,
       hasNotedDescendant: false,
+      fileCount: 0,
       ...overrides,
     };
   }
@@ -501,6 +534,7 @@ describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
         memoryTouchCount: 0,
         toolResultCount: 0,
         hasNotedDescendant: false,
+        fileCount: 0,
       },
       {
         id: "s-early",
@@ -514,6 +548,7 @@ describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
         memoryTouchCount: 0,
         toolResultCount: 0,
         hasNotedDescendant: false,
+        fileCount: 0,
       },
       {
         id: "s-late",
@@ -527,6 +562,7 @@ describe("sortSessions / buildGraphElements sort (CR-UI-10)", () => {
         memoryTouchCount: 0,
         toolResultCount: 0,
         hasNotedDescendant: false,
+        fileCount: 0,
       },
     ];
   }

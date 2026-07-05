@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { makeProject, mockApi, clickBanner, makeSessionDetail, type MockSession } from "./fixtures";
+import {
+  makeProject,
+  mockApi,
+  clickBanner,
+  makeSessionDetail,
+  waitForNextLayoutRun,
+  type MockSession,
+} from "./fixtures";
 
 // CR-UI-29 acceptance criteria: same-day sessions cascade-stack (day-baseline + incremental X/Y/
 // Z-index) per the approved mockup (docs/mockups/timeline-cascade-stack.png), replacing the old flat
@@ -128,7 +135,10 @@ test.describe("CR-UI-29 — Timeline cascade-stack", () => {
     const project = makeProject({ id: "sudoku", sessionCount: 3 });
     const sessions = [
       sessionAt("day1-a", "2026-06-20T09:00:00Z"),
-      sessionAt("day1-b", "2026-06-20T10:00:00Z"),
+      // CR-UI-07 (reopened 2026-07-04): banners now hide entirely at count 0 — this session's
+      // memory banner is clicked below via clickBanner, so it needs a nonzero memoryTouchCount to
+      // render/be clickable at all.
+      sessionAt("day1-b", "2026-06-20T10:00:00Z", { memoryTouchCount: 1 }),
       sessionAt("day1-c", "2026-06-20T11:00:00Z"),
     ];
     const detail = makeSessionDetail({
@@ -146,7 +156,10 @@ test.describe("CR-UI-29 — Timeline cascade-stack", () => {
     await page.getByLabel("Layout").selectOption("timeline");
 
     const midPos = await nodePosition(page, "day1-b");
-    await clickBanner(page, "day1-b", "memory");
+    // CR-UI-36: wait for the expand's own layout run to finish (not an arbitrary sleep/timeout)
+    // before reading the newly-added child's position — see waitForNextLayoutRun's doc comment in
+    // fixtures.ts for the root-caused race this fixes (intermittent full-suite-only failure).
+    await waitForNextLayoutRun(page, () => clickBanner(page, "day1-b", "memory"));
 
     const childPos = await page.evaluate(() => {
       const cy = (window as unknown as { __cy: import("cytoscape").Core }).__cy;

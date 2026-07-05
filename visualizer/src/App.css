@@ -84,6 +84,37 @@
   line-height: 1;
 }
 
+/* CR-CORE-05: bottom-left corner File badge — a different visual slot from `.session-banner-row`
+   (top row) and `.note-badge` (bottom-right, not clickable). Styled as a small pill like
+   `.session-banner` (readable count regardless of node/theme color) since, unlike the note-badge,
+   it carries text and is itself clickable. */
+.file-badge-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.file-badge {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 10px;
+  border: 1px solid #2e9e44;
+  background: var(--bg);
+  color: var(--text-h);
+  white-space: nowrap;
+}
+
+.file-badge:hover {
+  background: rgba(128, 128, 128, 0.15);
+}
+
 .app-shell {
   display: flex;
   flex-direction: column;

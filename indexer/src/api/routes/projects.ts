@@ -3,10 +3,12 @@ import path from "node:path";
 import { Router } from "express";
 import type { IndexDb } from "../../db/indexDb.js";
 import {
+  fileHistoryBackupExists,
   getProjectPath,
   getSessionDetail,
   getSessionFilePath,
   listProjects,
+  listProjectsByKind,
   listProjectsByRoot,
   listSessionDescendantNodeRefs,
   listSessions,
@@ -27,6 +29,7 @@ import {
 } from "../../db/annotationsDb.js";
 import { resolveProjectsRoot } from "../../discovery/scanRoots.js";
 import { rescan } from "../../discovery/rescan.js";
+import { rescanDesktopSessions } from "../../discovery/desktopRescan.js";
 import { parseSessionContent } from "../../parsing/sessionContent.js";
 import type { Logger } from "../../logger.js";
 import type { OpenFolderFn } from "../openFolder.js";
@@ -35,6 +38,10 @@ export interface ProjectsRouterOptions {
   indexDb: IndexDb;
   annotationsDb: AnnotationsDb;
   defaultProjectsRoot: string;
+  /** (v1.10, CR-CORE-05) `{CLAUDE_HOME}/file-history` root — see `CreateAppOptions.fileHistoryRoot`. */
+  fileHistoryRoot: string;
+  /** (v1.11, CR-CORE-06) Desktop sessions root — see `CreateAppOptions.desktopSessionsRoot`. */
+  desktopSessionsRoot: string;
   openFolder: OpenFolderFn;
   logger: Logger;
 }
@@ -92,11 +99,34 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
    */
   function doRescan(projectsRoots: string[] = resolveAllKnownRoots(options)): void {
     rescan({ db: indexDb, projectsRoots, annotationsDb: options.annotationsDb, logger });
+    // (v1.11, CR-CORE-06) A separate data source/tree from Code's projectsRoots above — always
+    // rescanned in full (no persisted-root variant like Code's browse feature), same on-demand
+    // incremental-by-mtime posture (D13). A missing root (no Claude Desktop on this machine, or a
+    // fixture that doesn't create it) is a no-op, not an error.
+    rescanDesktopSessions({ db: indexDb, desktopSessionsRoot: options.desktopSessionsRoot, logger });
   }
 
   router.get("/", (_req, res) => {
     doRescan();
     res.json(listProjects(indexDb));
+  });
+
+  // (v1.11, CR-CORE-06) Code/Cowork/Chat picker grouping — the data source for the approved
+  // grouped-dropdown mockup (REQUIREMENTS/BACKLOG.md's CR-CORE-06 entry). Registered as a static
+  // path on this router (mounted at /api/projects) — never confused with the `:id` routes below
+  // since none of them match a bare "/project-groups" segment.
+  router.get("/project-groups", (_req, res) => {
+    doRescan();
+    const code = listProjects(indexDb).map((p) => ({
+      id: p.id,
+      name: p.path,
+      sessionCount: p.sessionCount
+    }));
+    res.json({
+      code,
+      cowork: listProjectsByKind(indexDb, "cowork"),
+      chat: listProjectsByKind(indexDb, "chat")
+    });
   });
 
   router.get("/:id/sessions", (req, res) => {
@@ -290,6 +320,73 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
     } catch (err) {
       res.status(404).json({ error: `Tool result file no longer exists on disk: '${filePath}'.` });
       logger.warn(`tool-content: indexed path unreadable: ${filePath}: ${(err as Error).message}`);
+    }
+  });
+
+  // (v1.10, CR-CORE-05; contract revised v1.12 fixing the CR-CORE-05 validation-report Defect 1
+  // path-format mismatch) File-history backup content. `path` is the relative two-segment
+  // identifier `{sessionId}/{backupFileName}` — the same opaque identifier already exposed by
+  // `.../detail`'s `files[]` array (`backupFileName`), NOT a full filesystem path: unlike
+  // memory-content/agent-content/tool-content, `.../detail` never hands the client a ready-made
+  // absolute path for a file backup, and the file-history root's real on-disk location is
+  // server-side-only information the client has no way to construct. The server resolves the
+  // absolute path itself from `fileHistoryRoot`. Security requirement (same strength as
+  // memory-content/agent-content/tool-content, different mechanics since the input is no longer a
+  // full path to range-check): `path` must decompose into exactly two non-empty segments with no
+  // `.`/`..` traversal segment, `sessionId` must be a real session for this project, and
+  // `backupFileName` must be a known, indexed backup for that session — all validated *before*
+  // anything is read from disk.
+  router.get("/:id/file-content", (req, res) => {
+    doRescan();
+    const { id } = req.params;
+    if (!projectExists(indexDb, id)) {
+      res.status(404).json({ error: `Unknown project id: ${id}` });
+      return;
+    }
+
+    const filePath = req.query.path;
+    if (typeof filePath !== "string" || filePath.trim().length === 0) {
+      res.status(400).json({ error: "Request query must include a non-empty string 'path'." });
+      return;
+    }
+
+    const invalidPathError = () =>
+      res.status(400).json({
+        error: `'${filePath}' is not a known file-history backup for project '${id}'.`
+      });
+
+    // Accept either separator so a client can never accidentally pass on the wrong convention;
+    // reject any segment that could traverse (`.`/`..`) or an empty segment (leading/trailing/
+    // doubled separators).
+    const segments = filePath.split(/[\\/]+/).filter((segment) => segment.length > 0);
+    const hasTraversal = segments.some((segment) => segment === "." || segment === "..");
+    if (hasTraversal || segments.length !== 2) {
+      invalidPathError();
+      return;
+    }
+
+    const [sessionId, backupFileName] = segments;
+    if (!sessionExists(indexDb, id, sessionId) || !fileHistoryBackupExists(indexDb, sessionId, backupFileName)) {
+      invalidPathError();
+      return;
+    }
+
+    const resolvedFilePath = path.join(options.fileHistoryRoot, sessionId, backupFileName);
+    // Defense-in-depth: confirm the resolved path still sits exactly two segments below
+    // fileHistoryRoot (guards against a future change to the segment-validation above regressing
+    // this into a traversal bug).
+    const relativeToRoot = path.relative(options.fileHistoryRoot, resolvedFilePath);
+    if (relativeToRoot.startsWith("..") || path.isAbsolute(relativeToRoot)) {
+      invalidPathError();
+      return;
+    }
+
+    try {
+      const content = fs.readFileSync(resolvedFilePath, "utf-8");
+      res.json({ content });
+    } catch (err) {
+      res.status(404).json({ error: `File backup no longer exists on disk: '${filePath}'.` });
+      logger.warn(`file-content: indexed path unreadable: ${resolvedFilePath}: ${(err as Error).message}`);
     }
   });
 

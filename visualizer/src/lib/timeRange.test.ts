@@ -15,6 +15,7 @@ function makeSession(id: string, startedAt: string): Session {
     memoryTouchCount: 0,
     toolResultCount: 0,
     hasNotedDescendant: false,
+    fileCount: 0,
   };
 }
 

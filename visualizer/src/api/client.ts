@@ -8,6 +8,7 @@ import type {
   NoteEntry,
   Project,
   ProjectContent,
+  ProjectGroupsResponse,
   Session,
   SessionContent,
   SessionDetail,
@@ -49,6 +50,18 @@ export async function fetchProjects(): Promise<Project[]> {
     throw new ApiError(await extractErrorMessage(res), res.status);
   }
   return (await res.json()) as Project[];
+}
+
+// CR-CORE-06 (Sprint 8): documented Indexer v1.11 addition. See _API_CONTRACT/CONTRACT.md §
+// GET /api/projects/project-groups. Registered on the Indexer as a static path on the same router
+// as the `:id`-scoped routes — never confused with them (no bare `project-groups` segment matches
+// `:id`), so this is a plain fetch, not a special case here.
+export async function fetchProjectGroups(): Promise<ProjectGroupsResponse> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/project-groups`);
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as ProjectGroupsResponse;
 }
 
 export async function fetchSessions(projectId: string): Promise<Session[]> {
@@ -139,6 +152,27 @@ export async function fetchToolContent(
 ): Promise<{ content: string }> {
   const res = await fetch(
     `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/tool-content?path=${encodeURIComponent(filePath)}`,
+  );
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as { content: string };
+}
+
+// CR-CORE-05 (Sprint 8): documented Indexer v1.10 addition. See _API_CONTRACT/CONTRACT.md §
+// GET .../file-content. `path` is built client-side as `{sessionId}/{backupFileName}` — the
+// contract documents the server resolving this against its own `fileHistoryRoot`
+// (`{sessionId}/{backupFileName}` are "exactly two segments below" it); the Visualizer never
+// constructs (or needs to know) the full on-disk `file-history/` root path itself, same
+// never-invent-server-config principle as every other content endpoint here.
+export async function fetchFileContent(
+  projectId: string,
+  sessionId: string,
+  backupFileName: string,
+): Promise<{ content: string }> {
+  const path = `${sessionId}/${backupFileName}`;
+  const res = await fetch(
+    `${API_BASE_URL}/api/projects/${encodeURIComponent(projectId)}/file-content?path=${encodeURIComponent(path)}`,
   );
   if (!res.ok) {
     throw new ApiError(await extractErrorMessage(res), res.status);

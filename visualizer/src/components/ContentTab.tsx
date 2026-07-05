@@ -13,6 +13,7 @@ import {
   ApiError,
   deleteNote,
   fetchAgentContent,
+  fetchFileContent,
   fetchMemoryContent,
   fetchProjectContent,
   fetchSessionContent,
@@ -47,6 +48,9 @@ type ContentState =
   | { status: "subagent"; messages: SessionContentMessage[] }
   // CR-UI-15 (Sprint 5): raw tool-output text — identical treatment to memory content.
   | { status: "tool"; text: string }
+  // CR-CORE-05 (Sprint 8): raw file-history backup text — identical treatment to memory/tool
+  // content.
+  | { status: "file"; text: string }
   // CR-UI-25 (Sprint 5): project-level content, resolved server-side (README -> CLAUDE.md ->
   // earliest session's first user message -> none).
   | { status: "project"; source: ProjectContentSource; content: string | null };
@@ -119,6 +123,7 @@ function getSearchableTexts(content: ContentState): string[] {
       return content.messages.map((m) => m.text);
     case "memory":
     case "tool":
+    case "file":
       return [content.text];
     case "project":
       return content.content ? [content.content] : [];
@@ -251,6 +256,24 @@ export function ContentTab({
             });
           }
         });
+    } else if (selectedItem.nodeType === "file" && selectedItem.filePath && selectedItem.sessionId) {
+      // CR-CORE-05: raw file-history backup text — identical treatment to memory/tool content.
+      // `filePath` here carries `backupFileName` (see `SelectedGraphItem.filePath`'s doc comment in
+      // types.ts); `sessionId` is the owning session's id, needed alongside it to build the
+      // `GET .../file-content` query.
+      setContent({ status: "loading" });
+      fetchFileContent(project.id, selectedItem.sessionId, selectedItem.filePath)
+        .then((c) => {
+          if (!cancelled) setContent({ status: "file", text: c.content });
+        })
+        .catch((err: unknown) => {
+          if (!cancelled) {
+            setContent({
+              status: "error",
+              message: err instanceof ApiError ? err.message : "Failed to load content",
+            });
+          }
+        });
     } else if (selectedItem.nodeType === "project") {
       // CR-UI-25: project-level content, resolved server-side (README -> CLAUDE.md -> earliest
       // session's first user message -> none).
@@ -273,7 +296,13 @@ export function ContentTab({
     return () => {
       cancelled = true;
     };
-  }, [project.id, selectedItem?.nodeType, selectedItem?.rawId, selectedItem?.filePath]);
+  }, [
+    project.id,
+    selectedItem?.nodeType,
+    selectedItem?.rawId,
+    selectedItem?.filePath,
+    selectedItem?.sessionId,
+  ]);
 
   async function handleSaveNote() {
     if (!selectedItem) return;
@@ -312,6 +341,7 @@ export function ContentTab({
     content.status === "memory" ||
     content.status === "subagent" ||
     content.status === "tool" ||
+    content.status === "file" ||
     (content.status === "project" && content.source !== "none");
 
   const searchableTexts = getSearchableTexts(content);
@@ -434,6 +464,13 @@ export function ContentTab({
         {/* CR-UI-15: raw tool-output text — identical treatment to memory content. */}
         {content.status === "tool" && (
           <pre className="memory-content" data-testid="tool-content">
+            {renderHighlighted(content.text, searchQuery, matchCounter, currentMatchIndex)}
+          </pre>
+        )}
+        {/* CR-CORE-05: raw file-history backup text — identical treatment to memory/tool content,
+            plain React text rendering only, never raw-HTML injection. */}
+        {content.status === "file" && (
+          <pre className="memory-content" data-testid="file-content">
             {renderHighlighted(content.text, searchQuery, matchCounter, currentMatchIndex)}
           </pre>
         )}

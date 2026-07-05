@@ -48,6 +48,9 @@ function realDataShapedSessions(): MockSession[] {
       toolResultCount: 0,
     },
     {
+      // CR-UI-07 (reopened 2026-07-04): "partial" case per the reopened spec's example — Memory +
+      // Tool present, Subagent absent (0) — distinct from the single-type-only case this session
+      // used to represent.
       id: "s-partial",
       startedAt: "2026-06-24T12:00:00Z",
       endedAt: "2026-06-24T12:30:00Z",
@@ -57,7 +60,7 @@ function realDataShapedSessions(): MockSession[] {
       subagentCount: 0,
       touchedMemory: true,
       memoryTouchCount: 3,
-      toolResultCount: 0,
+      toolResultCount: 2,
     },
   ];
 }
@@ -73,7 +76,7 @@ function bannerLocator(
 }
 
 test.describe("CR-UI-07 — always-visible session summary banners", () => {
-  test("every session shows all three banners with correct counts, including 0, against varied mocked data", async ({
+  test("a session shows only the banners whose count is > 0 — all-zero shows no row, partial shows exactly its populated types, against varied mocked data", async ({
     page,
   }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 3 });
@@ -86,17 +89,20 @@ test.describe("CR-UI-07 — always-visible session summary banners", () => {
     await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
     await expect(page.getByTestId("graph-status")).toHaveAttribute("data-node-count", "4");
 
+    // Fully populated: all three banners render with correct counts.
     await expect(bannerLocator(page, "s-populated", "memory")).toHaveText("★ 2");
     await expect(bannerLocator(page, "s-populated", "subagent")).toHaveText("◆ 10");
     await expect(bannerLocator(page, "s-populated", "tool")).toHaveText("⚙ 2");
 
-    await expect(bannerLocator(page, "s-zero", "memory")).toHaveText("★ 0");
-    await expect(bannerLocator(page, "s-zero", "subagent")).toHaveText("◆ 0");
-    await expect(bannerLocator(page, "s-zero", "tool")).toHaveText("⚙ 0");
+    // CR-UI-07 (reopened 2026-07-04): all-zero renders NO banner row at all — inverted from the
+    // original "always show with 0" assertion.
+    await expect(page.locator('[data-testid="session-banner-row"][data-session-id="s-zero"]')).toHaveCount(0);
 
+    // Partial (Memory + Tool present, Subagent absent): exactly those two banners render, the
+    // absent one is not in the DOM at all (not just empty/hidden).
     await expect(bannerLocator(page, "s-partial", "memory")).toHaveText("★ 3");
-    await expect(bannerLocator(page, "s-partial", "subagent")).toHaveText("◆ 0");
-    await expect(bannerLocator(page, "s-partial", "tool")).toHaveText("⚙ 0");
+    await expect(bannerLocator(page, "s-partial", "tool")).toHaveText("⚙ 2");
+    await expect(bannerLocator(page, "s-partial", "subagent")).toHaveCount(0);
   });
 
   test("clicking ★ adds only memory-touch children; clicking again removes only those", async ({ page }) => {

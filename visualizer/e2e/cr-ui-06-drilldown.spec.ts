@@ -31,6 +31,10 @@ test.describe("CR-UI-06 — session-substructure drill-down", () => {
   }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 5 });
     const sessions = makeSessions(5);
+    // CR-UI-07 (reopened 2026-07-04): banners now hide entirely at count 0 — this test drives all
+    // three banners via clickBanner, so the target's own counts must be > 0 for each to render at
+    // all (independent of `detail`'s actual item counts below, which drive the child-node counts).
+    sessions[0] = { ...sessions[0], subagentCount: 2, memoryTouchCount: 1, toolResultCount: 1 };
     const target = sessions[0];
     const detail = makeSessionDetail({
       subagents: [
@@ -64,6 +68,9 @@ test.describe("CR-UI-06 — session-substructure drill-down", () => {
   test("clicking a banner again collapses only that type's children", async ({ page }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 5 });
     const sessions = makeSessions(5);
+    // CR-UI-07 (reopened 2026-07-04): see the note in the previous test — all three banners must
+    // have a nonzero count to render at all.
+    sessions[0] = { ...sessions[0], subagentCount: 1, memoryTouchCount: 1, toolResultCount: 1 };
     const target = sessions[0];
     const detail = makeSessionDetail({
       subagents: [{ agentId: "a1", agentType: "code-review", description: "reviewed the diff" }],
@@ -103,6 +110,11 @@ test.describe("CR-UI-06 — session-substructure drill-down", () => {
   }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 5 });
     const sessions = makeSessions(5);
+    // CR-UI-07 (reopened 2026-07-04): the memory banner must show a nonzero count to render/be
+    // clickable at all — deliberately kept distinct from `detail` below (still the default
+    // all-empty response), exercising the edge case of a stale/inconsistent count vs. the session's
+    // actual (now-empty) substructure, not just "count is 0 so nothing to click".
+    sessions[0] = { ...sessions[0], memoryTouchCount: 1 };
     const target = sessions[0];
     // No sessionDetailByKey entry -> mockApi's default all-empty detail response.
 

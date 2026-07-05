@@ -27,6 +27,28 @@ export interface Session {
   // badge can show on a collapsed (never drilled-into) session without an eager per-session
   // `.../detail` fetch.
   hasNotedDescendant: boolean;
+  // CR-CORE-05 (Sprint 8): documented Indexer v1.10 addition — count of unique files backed up
+  // during the session (file-history-snapshot entries, deduped by file path, highest version kept
+  // per path). Backs the new bottom-left corner File badge, same presence-only (hide-at-0)
+  // convention as CR-UI-07's banners.
+  fileCount: number;
+}
+
+// CR-CORE-06 (Sprint 8): documented Indexer v1.11 addition. See _API_CONTRACT/CONTRACT.md §
+// GET /api/projects/project-groups (D26) — the Code/Cowork/Chat picker grouping. `code` reshapes
+// the existing `GET /api/projects` data (`name` = that endpoint's `path`); every `id` here is
+// directly usable as `:id` against the existing per-project routes (`.../sessions`, `.../detail`,
+// `.../content`) — Cowork/Chat ids reuse that whole surface unmodified.
+export interface ProjectGroupEntry {
+  id: string;
+  name: string;
+  sessionCount: number;
+}
+
+export interface ProjectGroupsResponse {
+  code: ProjectGroupEntry[];
+  cowork: ProjectGroupEntry[];
+  chat: ProjectGroupEntry[];
 }
 
 export type LayoutName = "cose" | "breadthfirst" | "timeline";
@@ -89,13 +111,22 @@ export interface SessionDetail {
   subagents: { agentId: string; agentType: string; description: string; filePath: string }[];
   memoryTouches: { filePath: string; name: string | null }[];
   overflows: { toolUseId: string; filePath: string }[];
+  // CR-CORE-05 (Sprint 8): documented Indexer v1.10 addition — one row per unique file path ever
+  // backed up in this session (highest `version` kept when a path was backed up more than once).
+  // `filePath` is the original tracked-file path (used as this drill-down type's `rawId`, same
+  // convention as `memoryTouches[].filePath` — stable across re-versioning); `backupFileName` is the
+  // opaque identifier `GET .../file-content` expects, NOT a raw path.
+  files: { filePath: string; backupFileName: string; version: number; backupTime: string }[];
 }
 
 // CR-UI-08 (Sprint 3): documented Indexer v1.5 additions. See _API_CONTRACT/CONTRACT.md § Notes and
 // § content endpoints. `NodeType` is the API's fixed vocabulary for note/content targets — note it
 // is "memoryTouch", not "memory" (the Visualizer's internal Cytoscape node `type` value for that
 // same item, an unrelated naming layer scoped to `visualizer/src/components/GraphCanvas.tsx`).
-export type NodeType = "session" | "memoryTouch" | "subagent" | "tool" | "project";
+// CR-CORE-05 (Sprint 8): "file" added — a session's file-history drill-down item. Per the CR's own
+// investigation, notes (CR-UI-08) work for it "for free": `ContentTab.tsx`'s note lookup is already
+// generic over `NodeType` with no hardcoded type list.
+export type NodeType = "session" | "memoryTouch" | "subagent" | "tool" | "project" | "file";
 
 export interface NoteEntry {
   projectId: string;
@@ -165,5 +196,8 @@ export interface SelectedGraphItem {
   // two types is the notes/content API's `nodeId` (`agentId`/`toolUseId`), not a file path. Omitted
   // for "memoryTouch" (its `rawId` already *is* the file path) and for "project"/"session" (no
   // per-item file beyond the project's own folder path).
+  // CR-CORE-05 (Sprint 8): reused for "file" items to carry `backupFileName` — the opaque identifier
+  // `GET .../file-content` expects alongside `sessionId` (below), distinct from `rawId` (the
+  // original tracked-file path, used as the notes API's stable `nodeId`).
   filePath?: string;
 }

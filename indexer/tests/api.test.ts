@@ -22,6 +22,7 @@ describe("HTTP API (CR-API-01)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: openFolderMock,
       logger: { warn: () => {}, info: () => {} }
     });
@@ -97,6 +98,15 @@ describe("HTTP API (CR-API-01)", () => {
           toolUseId: "toolu_big1",
           filePath: expect.stringContaining("tooluse-overflow-1.txt")
         }
+      ],
+      files: [
+        { filePath: "README.md", backupFileName: fixture.fileHistoryReadmeBackupName, version: 1, backupTime: "2026-06-02T09:05:00.000Z" },
+        {
+          filePath: "backend\\tests\\test_auth.py",
+          backupFileName: fixture.fileHistoryAuthPyBackupName,
+          version: 2,
+          backupTime: "2026-06-02T09:05:00.000Z"
+        }
       ]
     });
   });
@@ -106,7 +116,7 @@ describe("HTTP API (CR-API-01)", () => {
       `/api/projects/${fixture.projectDirName}/sessions/session-aaa/detail`
     );
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ subagents: [], memoryTouches: [], overflows: [] });
+    expect(res.body).toEqual({ subagents: [], memoryTouches: [], overflows: [], files: [] });
   });
 
   it("GET /api/projects/:id/sessions/:sessionId/detail for an unknown project returns a clean 404", async () => {

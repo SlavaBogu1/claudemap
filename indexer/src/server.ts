@@ -3,7 +3,15 @@ import path from "node:path";
 import { createApp } from "./api/app.js";
 import { openIndexDb } from "./db/indexDb.js";
 import { openAnnotationsDb } from "./db/annotationsDb.js";
-import { API_HOST, API_PORT, ANNOTATIONS_DB_PATH, INDEX_DB_PATH, defaultProjectsRoot } from "./config.js";
+import {
+  API_HOST,
+  API_PORT,
+  ANNOTATIONS_DB_PATH,
+  INDEX_DB_PATH,
+  defaultDesktopSessionsRoot,
+  defaultFileHistoryRoot,
+  defaultProjectsRoot
+} from "./config.js";
 import { consoleLogger } from "./logger.js";
 
 fs.mkdirSync(path.dirname(INDEX_DB_PATH), { recursive: true });
@@ -15,6 +23,8 @@ const app = createApp({
   indexDb,
   annotationsDb,
   defaultProjectsRoot: defaultProjectsRoot(),
+  fileHistoryRoot: defaultFileHistoryRoot(),
+  desktopSessionsRoot: defaultDesktopSessionsRoot(),
   logger: consoleLogger
 });
 

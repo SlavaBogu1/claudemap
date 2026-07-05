@@ -29,6 +29,7 @@ describe("CORS allowlist (CR-API-02)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });

@@ -24,6 +24,14 @@ import path from "node:path";
 export interface Fixture {
   tmpRoot: string;
   projectsRoot: string;
+  fileHistoryRoot: string;
+  /**
+   * (CR-CORE-06) Deliberately never created — `rescanDesktopSessions` treats a missing root as a
+   * no-op (no Claude Desktop data on this "machine"), so tests that don't care about Cowork/Chat
+   * sessions get a fast, isolated no-op instead of accidentally scanning this machine's real
+   * `%APPDATA%\Claude\local-agent-mode-sessions` on every GET (slow AND touches real user data).
+   */
+  desktopSessionsRoot: string;
   projectDirName: string;
   projectDirPath: string;
   realProjectPath: string;
@@ -34,11 +42,18 @@ export interface Fixture {
   subagentSub1MetaPath: string;
   subagentSub1TranscriptPath: string;
   overflowFilePath: string;
+  /** (CR-CORE-05) session-bbb's file-history backups: authPy backed up twice (v1, v2 — kept), README once. */
+  fileHistoryAuthPyBackupPath: string;
+  fileHistoryAuthPyBackupName: string;
+  fileHistoryReadmeBackupPath: string;
+  fileHistoryReadmeBackupName: string;
 }
 
 export function buildFixture(): Fixture {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "indexer-fixture-"));
   const projectsRoot = path.join(tmpRoot, "projects");
+  const fileHistoryRoot = path.join(tmpRoot, "file-history");
+  const desktopSessionsRoot = path.join(tmpRoot, "no-desktop-sessions");
   const projectDirName = "D--Fixture--ProjectOne";
   const projectDirPath = path.join(projectsRoot, projectDirName);
   const realProjectPath = "D:\\Fixture\\ProjectOne";
@@ -68,6 +83,14 @@ export function buildFixture(): Fixture {
       gitBranch: "main",
       timestamp: "2026-06-01T10:01:00.000Z",
       message: { role: "assistant", content: [{ type: "text", text: "Sure, let's do it." }] }
+    }),
+    // (CR-CORE-05) A no-op snapshot line (empty trackedFileBackups) — must not contribute to
+    // fileCount; this session should still show fileCount: 0.
+    line({
+      type: "file-history-snapshot",
+      messageId: "aaa-snap1",
+      snapshot: { messageId: "aaa-snap1", trackedFileBackups: {}, timestamp: "2026-06-01T10:01:30.000Z" },
+      isSnapshotUpdate: true
     })
   ]);
 
@@ -85,6 +108,15 @@ export function buildFixture(): Fixture {
   // REQUIREMENTS/knowledge/CLAUDE_SESSION_FORMAT.md), which is also where a session's Write/Edit
   // tool_use targets it — so this is the path a real memory-touch record would carry.
   const memoryTopic1Path = path.join(projectDirPath, "memory", "topic1.md");
+
+  // (CR-CORE-05) file-history-snapshot backups for session-bbb: "backend\tests\test_auth.py" is
+  // backed up twice (v1, then v2 — highest version kept, backupFileName updated to v2's), and
+  // "README.md" once — expect a merged fileCount of 2 unique paths.
+  const fileHistoryAuthPyBackupNameV1 = "0087446fcc94a7fb@v1";
+  const fileHistoryAuthPyBackupName = "0087446fcc94a7fb@v2";
+  const fileHistoryReadmeBackupName = "a1b2c3d4e5f6a7b8@v1";
+  const fileHistoryAuthPyBackupPath = path.join(fileHistoryRoot, "session-bbb", fileHistoryAuthPyBackupName);
+  const fileHistoryReadmeBackupPath = path.join(fileHistoryRoot, "session-bbb", fileHistoryReadmeBackupName);
 
   writeLines(sessionBbbPath, [
     line({
@@ -168,6 +200,45 @@ export function buildFixture(): Fixture {
             content: `<persisted-output>\nFull output saved to: ${overflowFilePath}\n\nPreview (first 2KB): big command output preview...`
           }
         ]
+      }
+    }),
+    // (CR-CORE-05) First snapshot: test_auth.py backed up at v1.
+    line({
+      type: "file-history-snapshot",
+      messageId: "bbb-snap1",
+      snapshot: {
+        messageId: "bbb-snap1",
+        trackedFileBackups: {
+          "backend\\tests\\test_auth.py": {
+            backupFileName: fileHistoryAuthPyBackupNameV1,
+            version: 1,
+            backupTime: "2026-06-02T09:04:30.000Z"
+          }
+        },
+        timestamp: "2026-06-02T09:04:30.000Z"
+      },
+      isSnapshotUpdate: true
+    }),
+    // (CR-CORE-05) Second snapshot: test_auth.py bumped to v2 (must win over v1), plus a new
+    // README.md path at v1 — merged unique fileCount should be 2, not 3.
+    line({
+      type: "file-history-snapshot",
+      messageId: "bbb-snap2",
+      snapshot: {
+        messageId: "bbb-snap2",
+        trackedFileBackups: {
+          "backend\\tests\\test_auth.py": {
+            backupFileName: fileHistoryAuthPyBackupName,
+            version: 2,
+            backupTime: "2026-06-02T09:05:00.000Z"
+          },
+          "README.md": {
+            backupFileName: fileHistoryReadmeBackupName,
+            version: 1,
+            backupTime: "2026-06-02T09:05:00.000Z"
+          }
+        },
+        timestamp: "2026-06-02T09:05:00.000Z"
       }
     })
   ]);
@@ -267,9 +338,18 @@ export function buildFixture(): Fixture {
     ].join("\n")
   );
 
+  // --- file-history/ (CR-CORE-05) — real backup content readable at {fileHistoryRoot}/{sessionId}/
+  // {backupFileName}, keyed by session UUID (sibling of projects/, per the on-disk investigation).
+  const fileHistoryBbbDir = path.join(fileHistoryRoot, "session-bbb");
+  fs.mkdirSync(fileHistoryBbbDir, { recursive: true });
+  fs.writeFileSync(fileHistoryAuthPyBackupPath, "def test_auth():\n    assert True\n");
+  fs.writeFileSync(fileHistoryReadmeBackupPath, "# Fixture Project\n");
+
   return {
     tmpRoot,
     projectsRoot,
+    fileHistoryRoot,
+    desktopSessionsRoot,
     projectDirName,
     projectDirPath,
     realProjectPath,
@@ -279,7 +359,11 @@ export function buildFixture(): Fixture {
     memoryTopic1Path,
     subagentSub1MetaPath,
     subagentSub1TranscriptPath,
-    overflowFilePath
+    overflowFilePath,
+    fileHistoryAuthPyBackupPath,
+    fileHistoryAuthPyBackupName,
+    fileHistoryReadmeBackupPath,
+    fileHistoryReadmeBackupName
   };
 }
 

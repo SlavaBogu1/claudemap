@@ -8,6 +8,7 @@ import {
   getSessionMtime,
   listMemoryFilePathsForProject,
   listSessionIdsForProject,
+  replaceFileHistoryEntries,
   replaceMemoryTouches,
   replaceOverflows,
   replaceSubagents,
@@ -168,6 +169,12 @@ function rescanProjectSessions(
     replaceSubagents(db, sessionId, subagentRecords);
     replaceOverflows(db, sessionId, parsed.overflows);
     replaceMemoryTouches(db, sessionId, parsed.memoryTouches);
+    // (CR-CORE-05) One row per unique file path, already deduplicated/highest-version-kept by the parser.
+    replaceFileHistoryEntries(
+      db,
+      sessionId,
+      parsed.fileHistory.map((f) => ({ sessionId, ...f }))
+    );
 
     // (CR-CORE-03) Wholesale replace, keyed (projectId, "session", sessionId) — safe because this
     // table has no user-edit path to collide with (unlike notes/CR-UI-08). Only touched when this
@@ -193,6 +200,7 @@ function rescanProjectSessions(
       preview: parsed.preview,
       touchedMemory: parsed.touchedMemory,
       subagentCount: subagentRecords.length,
+      fileCount: parsed.fileHistory.length,
       indexedAt: now()
     });
 

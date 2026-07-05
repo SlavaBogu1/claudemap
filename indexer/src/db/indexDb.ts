@@ -1,7 +1,9 @@
 import Database from "better-sqlite3";
 import type {
+  FileHistoryRecord,
   MemoryFileRecord,
   ProjectEntry,
+  ProjectGroupEntry,
   SessionDetail,
   SessionEntry,
   SubagentRecord,
@@ -22,7 +24,11 @@ export function openIndexDb(filePath: string): IndexDb {
       id TEXT PRIMARY KEY,
       root TEXT NOT NULL,
       dir_path TEXT NOT NULL,
-      path TEXT
+      path TEXT,
+      -- (v1.11, CR-CORE-06) 'code' (default, Claude Code projects — the only kind that existed
+      -- before this column) | 'cowork' | 'chat' (Claude Desktop pseudo-projects: one row per Cowork
+      -- Space or per standalone Chat session, populated by discovery/desktopRescan.ts).
+      kind TEXT NOT NULL DEFAULT 'code'
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -38,6 +44,7 @@ export function openIndexDb(filePath: string): IndexDb {
       preview TEXT,
       touched_memory INTEGER NOT NULL DEFAULT 0,
       subagent_count INTEGER NOT NULL DEFAULT 0,
+      file_count INTEGER NOT NULL DEFAULT 0,
       last_indexed_at INTEGER NOT NULL
     );
 
@@ -71,8 +78,53 @@ export function openIndexDb(filePath: string): IndexDb {
       session_id TEXT NOT NULL,
       file_path TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS file_history_entries (
+      session_id TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      backup_file_name TEXT NOT NULL,
+      version INTEGER NOT NULL,
+      backup_time TEXT
+    );
   `);
+  migrateAdditiveColumns(db);
   return db;
+}
+
+/**
+ * (CR-CORE-07) `CREATE TABLE IF NOT EXISTS` above is a no-op against an already-existing table, so a
+ * column added to this schema in a later sprint (e.g. `sessions.file_count` in CR-CORE-05,
+ * `projects.kind` in CR-CORE-06) never actually reaches a real, pre-existing on-disk `index.db` —
+ * the very first write/read against that column then crashes with an unhandled `SqliteError`
+ * ("table X has no column named Y"), surfaced to every endpoint since every one rescans first (D13).
+ *
+ * This runs once at DB-open time, before any other code touches the DB: for every table below, check
+ * its actual columns via `PRAGMA table_info` against the columns this schema version expects, and
+ * `ALTER TABLE ... ADD COLUMN` for any additive column found missing. A fresh DB (just created above)
+ * already has every column, so this is a no-op for it — only a genuinely older on-disk file pays the
+ * (cheap, one-time) cost. Additive-only: this does not handle column removal/renaming/type changes,
+ * which this schema has never needed so far.
+ */
+function migrateAdditiveColumns(db: IndexDb): void {
+  const additiveColumns: Record<string, { name: string; ddl: string }[]> = {
+    projects: [
+      { name: "kind", ddl: `ALTER TABLE projects ADD COLUMN kind TEXT NOT NULL DEFAULT 'code'` }
+    ],
+    sessions: [
+      { name: "file_count", ddl: `ALTER TABLE sessions ADD COLUMN file_count INTEGER NOT NULL DEFAULT 0` }
+    ]
+  };
+
+  for (const [table, columns] of Object.entries(additiveColumns)) {
+    const existing = new Set(
+      (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).map((c) => c.name)
+    );
+    for (const column of columns) {
+      if (!existing.has(column.name)) {
+        db.exec(column.ddl);
+      }
+    }
+  }
 }
 
 export function upsertProject(db: IndexDb, id: string, root: string, dirPath: string): void {
@@ -84,6 +136,26 @@ export function upsertProject(db: IndexDb, id: string, root: string, dirPath: st
 
 export function updateProjectPath(db: IndexDb, id: string, resolvedPath: string): void {
   db.prepare(`UPDATE projects SET path = ? WHERE id = ?`).run(resolvedPath, id);
+}
+
+/**
+ * (v1.11, CR-CORE-06) Upsert a Claude Desktop pseudo-project — one row per Cowork Space
+ * (`id: "cowork:<spaceId>"`) or per standalone Chat session (`id: "chat:<sessionId>"`). `root` is a
+ * fixed marker (not a real scan root), distinct from any Code project's real root path, so these
+ * rows can never collide with `resolveAllKnownRoots`'s Code discovery. `displayName` is the Cowork
+ * Space's `name` or the Chat session's `title` — surfaced as `path` on the shared `projects` row,
+ * mirroring how a Code project's `path` is its resolved real folder.
+ */
+export function upsertDesktopProject(
+  db: IndexDb,
+  id: string,
+  kind: "cowork" | "chat",
+  displayName: string
+): void {
+  db.prepare(
+    `INSERT INTO projects (id, root, dir_path, path, kind) VALUES (?, 'desktop', ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET path = excluded.path, kind = excluded.kind`
+  ).run(id, id, displayName, kind);
 }
 
 export function getSessionMtime(db: IndexDb, filePath: string): number | null {
@@ -122,6 +194,7 @@ export function deleteSession(db: IndexDb, sessionId: string): void {
     db.prepare(`DELETE FROM subagents WHERE session_id = ?`).run(id);
     db.prepare(`DELETE FROM tool_result_overflows WHERE session_id = ?`).run(id);
     db.prepare(`DELETE FROM session_memory_touches WHERE session_id = ?`).run(id);
+    db.prepare(`DELETE FROM file_history_entries WHERE session_id = ?`).run(id);
     db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
   });
   del(sessionId);
@@ -163,6 +236,8 @@ export interface UpsertSessionInput {
   preview: string | null;
   touchedMemory: boolean;
   subagentCount: number;
+  /** (v1.10, CR-CORE-05) Count of unique files backed up during the session (file-history-snapshot). */
+  fileCount: number;
   indexedAt: number;
 }
 
@@ -170,9 +245,9 @@ export function upsertSession(db: IndexDb, s: UpsertSessionInput): void {
   db.prepare(
     `INSERT INTO sessions
        (id, project_id, file_path, mtime_ms, started_at, ended_at, message_count, git_branch,
-        slug, preview, touched_memory, subagent_count, last_indexed_at)
+        slug, preview, touched_memory, subagent_count, file_count, last_indexed_at)
      VALUES (@id, @projectId, @filePath, @mtimeMs, @startedAt, @endedAt, @messageCount, @gitBranch,
-             @slug, @preview, @touchedMemory, @subagentCount, @indexedAt)
+             @slug, @preview, @touchedMemory, @subagentCount, @fileCount, @indexedAt)
      ON CONFLICT(id) DO UPDATE SET
        project_id = excluded.project_id,
        file_path = excluded.file_path,
@@ -185,6 +260,7 @@ export function upsertSession(db: IndexDb, s: UpsertSessionInput): void {
        preview = excluded.preview,
        touched_memory = excluded.touched_memory,
        subagent_count = excluded.subagent_count,
+       file_count = excluded.file_count,
        last_indexed_at = excluded.last_indexed_at`
   ).run({ ...s, touchedMemory: s.touchedMemory ? 1 : 0 });
 }
@@ -220,6 +296,21 @@ export function replaceMemoryTouches(db: IndexDb, sessionId: string, filePaths: 
   }
 }
 
+/**
+ * (v1.10, CR-CORE-05) Replaces a session's `file_history_entries` wholesale, one row per unique
+ * file path — mirrors `replaceSubagents`/`replaceOverflows`/`replaceMemoryTouches`.
+ */
+export function replaceFileHistoryEntries(db: IndexDb, sessionId: string, records: FileHistoryRecord[]): void {
+  db.prepare(`DELETE FROM file_history_entries WHERE session_id = ?`).run(sessionId);
+  const insert = db.prepare(
+    `INSERT INTO file_history_entries (session_id, file_path, backup_file_name, version, backup_time)
+     VALUES (?, ?, ?, ?, ?)`
+  );
+  for (const r of records) {
+    insert.run(sessionId, r.filePath, r.backupFileName, r.version, r.backupTime);
+  }
+}
+
 export function upsertMemoryFile(
   db: IndexDb,
   record: MemoryFileRecord,
@@ -247,6 +338,12 @@ export function upsertMemoryFile(
   });
 }
 
+// (v1.11, CR-CORE-06) Both listProjects/listProjectsByRoot are filtered to kind = 'code' — GET
+// /api/projects's documented contract is Code-projects-only (the default {CLAUDE_HOME}/projects
+// root plus persisted custom roots); Cowork/Chat pseudo-projects are surfaced only via the new
+// GET /api/projects/project-groups endpoint (listProjectsByKind below), never leaking into this
+// existing, unversioned-shape endpoint.
+
 export function listProjects(db: IndexDb): ProjectEntry[] {
   const rows = db
     .prepare(
@@ -256,6 +353,7 @@ export function listProjects(db: IndexDb): ProjectEntry[] {
               MAX(s.ended_at) AS lastActiveAt
        FROM projects p
        LEFT JOIN sessions s ON s.project_id = p.id
+       WHERE p.kind = 'code'
        GROUP BY p.id
        ORDER BY p.id`
     )
@@ -278,7 +376,7 @@ export function listProjectsByRoot(db: IndexDb, root: string): ProjectEntry[] {
               MAX(s.ended_at) AS lastActiveAt
        FROM projects p
        LEFT JOIN sessions s ON s.project_id = p.id
-       WHERE p.root = ?
+       WHERE p.root = ? AND p.kind = 'code'
        GROUP BY p.id
        ORDER BY p.id`
     )
@@ -290,6 +388,30 @@ export function listProjectsByRoot(db: IndexDb, root: string): ProjectEntry[] {
     sessionCount: r.sessionCount,
     lastActiveAt: r.lastActiveAt ?? null
   }));
+}
+
+/**
+ * (v1.11, CR-CORE-06) Every pseudo-project of the given kind ('cowork' | 'chat'), each with its
+ * session count — the data source for `GET /api/projects/project-groups`'s cowork/chat buckets. `id`
+ * is the full pseudo-project id (e.g. `"cowork:<spaceId>"`), directly usable as `:id` against every
+ * existing per-project route (`.../sessions`, `.../detail`, `.../content`) — Cowork/Chat sessions
+ * reuse that whole surface unmodified.
+ */
+export function listProjectsByKind(db: IndexDb, kind: "cowork" | "chat"): ProjectGroupEntry[] {
+  const rows = db
+    .prepare(
+      `SELECT p.id AS id,
+              p.path AS name,
+              COUNT(s.id) AS sessionCount
+       FROM projects p
+       LEFT JOIN sessions s ON s.project_id = p.id
+       WHERE p.kind = ?
+       GROUP BY p.id
+       ORDER BY p.path`
+    )
+    .all(kind) as any[];
+
+  return rows.map((r) => ({ id: r.id, name: r.name ?? r.id, sessionCount: r.sessionCount }));
 }
 
 export function projectExists(db: IndexDb, id: string): boolean {
@@ -310,6 +432,7 @@ export function listSessions(db: IndexDb, projectId: string): SessionEntry[] {
       `SELECT s.id AS id, s.started_at AS startedAt, s.ended_at AS endedAt,
               s.message_count AS messageCount, s.git_branch AS gitBranch, s.preview,
               s.subagent_count AS subagentCount, s.touched_memory AS touchedMemory,
+              s.file_count AS fileCount,
               COALESCE(mt.cnt, 0) AS memoryTouchCount,
               COALESCE(tr.cnt, 0) AS toolResultCount
        FROM sessions s
@@ -335,6 +458,7 @@ export function listSessions(db: IndexDb, projectId: string): SessionEntry[] {
     touchedMemory: !!r.touchedMemory,
     memoryTouchCount: r.memoryTouchCount,
     toolResultCount: r.toolResultCount,
+    fileCount: r.fileCount,
     // Computed by the caller (routes/projects.ts), which also needs annotations.db's notes table —
     // the two SQLite files are never merged/joined at the SQL level (D16). Defaulted here so this
     // function alone still returns a fully-shaped SessionEntry[].
@@ -391,6 +515,20 @@ export function toolResultFileExists(db: IndexDb, projectId: string, filePath: s
        WHERE s.project_id = ? AND tro.file_path = ?`
     )
     .get(projectId, filePath);
+  return !!row;
+}
+
+/**
+ * (v1.10, CR-CORE-05) Whether `backupFileName` is a known, indexed file-history backup for
+ * `sessionId` — the security check GET .../file-content relies on before ever touching the
+ * filesystem with a query-param path (mirrors `memoryFileExists`'s pattern). The route derives
+ * `sessionId`/`backupFileName` from the requested path's position under `defaultFileHistoryRoot()`
+ * and additionally confirms `sessionId` belongs to the requested project via `sessionExists`.
+ */
+export function fileHistoryBackupExists(db: IndexDb, sessionId: string, backupFileName: string): boolean {
+  const row = db
+    .prepare(`SELECT 1 FROM file_history_entries WHERE session_id = ? AND backup_file_name = ?`)
+    .get(sessionId, backupFileName);
   return !!row;
 }
 
@@ -470,5 +608,14 @@ export function getSessionDetail(db: IndexDb, sessionId: string): SessionDetail 
     )
     .all(sessionId) as { toolUseId: string | null; filePath: string }[];
 
-  return { subagents, memoryTouches, overflows };
+  const files = db
+    .prepare(
+      `SELECT file_path AS filePath, backup_file_name AS backupFileName, version, backup_time AS backupTime
+       FROM file_history_entries
+       WHERE session_id = ?
+       ORDER BY file_path`
+    )
+    .all(sessionId) as { filePath: string; backupFileName: string; version: number; backupTime: string | null }[];
+
+  return { subagents, memoryTouches, overflows, files };
 }

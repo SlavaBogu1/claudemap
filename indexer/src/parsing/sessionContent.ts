@@ -28,6 +28,12 @@ export function parseSessionContent(filePath: string, logger: Logger): SessionCo
 
     if (entry.type !== "user" && entry.type !== "assistant") continue;
     if (entry.isMeta) continue;
+    // (CR-CORE-06) A Claude Desktop Cowork/Chat `audit.jsonl` inlines a spawned sub-conversation's
+    // turns in the same file (tagged with a non-null `parent_tool_use_id`) rather than a separate
+    // subagent transcript file like Claude Code — exclude them so this renders only the session's
+    // own top-level conversation. `parent_tool_use_id` never appears on a real Claude Code session
+    // line, so this is a no-op for the existing Code content path.
+    if (entry.parent_tool_use_id) continue;
 
     const text = extractText(entry.message?.content);
     if (text === null) continue;
@@ -35,7 +41,9 @@ export function parseSessionContent(filePath: string, logger: Logger): SessionCo
     messages.push({
       role: entry.type,
       text,
-      timestamp: entry.timestamp ?? null
+      // (CR-CORE-06) `_audit_timestamp` is Claude Desktop's audit-log equivalent of Claude Code's
+      // top-level `timestamp` field.
+      timestamp: entry.timestamp ?? entry._audit_timestamp ?? null
     });
   }
 

@@ -26,6 +26,10 @@ export interface MockSession {
   // all need updating — an omitted value serializes as `undefined`, which the app's badge check
   // treats the same as `false`.
   hasNotedDescendant?: boolean;
+  // CR-CORE-05 (Sprint 8): documented Indexer v1.10 addition — optional for the same reason as
+  // `hasNotedDescendant` above (an omitted value serializes as `undefined`, and the app's File-badge
+  // check (`fileCount <= 0`) treats that the same as 0/hidden).
+  fileCount?: number;
 }
 
 export function makeProject(overrides: Partial<MockProject> = {}): MockProject {
@@ -46,10 +50,16 @@ export function makeSessions(count: number): MockSession[] {
     messageCount: 100 + i,
     gitBranch: "main",
     preview: `Session ${i} preview text — implemented feature ${i}.`,
-    subagentCount: i % 3,
-    touchedMemory: i % 2 === 0,
-    memoryTouchCount: i % 2 === 0 ? i % 4 : 0,
-    toolResultCount: i % 5,
+    // CR-UI-07 (reopened 2026-07-04): every generated session keeps all three counts strictly > 0
+    // (`+ 1` on each modulo) — banners now hide entirely at count 0, and many existing specs across
+    // the suite click a `makeSessions(...)`-derived session's banners (e.g. `sessions[0]`) to drive
+    // drill-down expansion for unrelated behavior (paths, content, notes, themes) that has nothing
+    // to do with the banner counts themselves. A `% n` alone hit exactly 0 at i=0 for every field,
+    // silently un-renderable once banners became presence-only.
+    subagentCount: (i % 3) + 1,
+    touchedMemory: true,
+    memoryTouchCount: (i % 4) + 1,
+    toolResultCount: (i % 5) + 1,
     hasNotedDescendant: false,
   }));
 }
@@ -57,20 +67,31 @@ export function makeSessions(count: number): MockSession[] {
 // CR-UI-06 (Sprint 2): mock shape for the documented Indexer v1.3 addition
 // (GET /api/projects/:id/sessions/:sessionId/detail) — never a live Indexer in tests.
 // CR-UI-15 (Sprint 5): subagents gained `filePath` ("Agent Path", Indexer v1.6).
+// CR-CORE-05 (Sprint 8): mock shape for the documented Indexer v1.10 addition to `.../detail`'s
+// `files` array — never a live Indexer in tests.
+export interface MockFileEntry {
+  filePath: string;
+  backupFileName: string;
+  version: number;
+  backupTime: string;
+}
+
 export interface MockSessionDetail {
   subagents: { agentId: string; agentType: string; description: string; filePath?: string }[];
   memoryTouches: { filePath: string; name: string }[];
   overflows: { toolUseId: string; filePath: string }[];
+  files: MockFileEntry[];
 }
 
 export function makeSessionDetail(overrides: Partial<MockSessionDetail> = {}): MockSessionDetail {
-  return { subagents: [], memoryTouches: [], overflows: [], ...overrides };
+  return { subagents: [], memoryTouches: [], overflows: [], files: [], ...overrides };
 }
 
 // CR-UI-08 (Sprint 3): mock shapes for the documented Indexer v1.5 additions — never a live
 // Indexer in tests. `MockNoteEntry` mirrors `NoteEntry` (visualizer/src/types.ts) structurally
 // rather than importing it, consistent with this file's existing Mock* types.
-export type MockNodeType = "session" | "memoryTouch" | "subagent" | "tool" | "project";
+// CR-CORE-05 (Sprint 8): "file" added, mirroring the real `NodeType` addition in types.ts.
+export type MockNodeType = "session" | "memoryTouch" | "subagent" | "tool" | "project" | "file";
 
 export interface MockNoteEntry {
   projectId: string;
@@ -98,9 +119,26 @@ export interface MockClaudeMapNoteEntry {
   updatedAt: string;
 }
 
+// CR-CORE-06 (Sprint 8, D26): mock shape for the documented Indexer v1.11 addition
+// (GET /api/projects/project-groups) — never a live Indexer in tests.
+export interface MockProjectGroupEntry {
+  id: string;
+  name: string;
+  sessionCount: number;
+}
+
+export interface MockProjectGroups {
+  code: MockProjectGroupEntry[];
+  cowork: MockProjectGroupEntry[];
+  chat: MockProjectGroupEntry[];
+}
+
 export interface MockApiOptions {
   projects: MockProject[];
   sessionsByProjectId: Record<string, MockSession[]>;
+  // CR-CORE-06 (Sprint 8, D26): omitted -> `{ code: [], cowork: [], chat: [] }` (no Cowork/Chat
+  // groups render — the picker just shows Code, today's existing behavior).
+  projectGroups?: MockProjectGroups;
   browseResponse?: { status: number; body: unknown };
   // Keyed by "<projectId>/<sessionId>". Sessions with no entry get an all-empty detail response.
   sessionDetailByKey?: Record<string, MockSessionDetail>;
@@ -112,6 +150,10 @@ export interface MockApiOptions {
   // empty-messages / empty-content response, mirroring memoryContentByKey/sessionContentByKey.
   agentContentByKey?: Record<string, MockSessionContent>;
   toolContentByKey?: Record<string, string>;
+  // CR-CORE-05 (Sprint 8): keyed by "<projectId>/<sessionId>/<backupFileName>" — mirrors the real
+  // endpoint's `path={sessionId}/{backupFileName}` query param, identical mock treatment to
+  // memory-content/tool-content otherwise.
+  fileContentByKey?: Record<string, string>;
   // CR-UI-25 (Sprint 5): keyed by "<projectId>". Projects with no entry get `{source: "none",
   // content: null}`.
   projectContentByKey?: Record<string, { source: string; content: string | null }>;
@@ -143,6 +185,15 @@ export async function mockApi(page: Page, options: MockApiOptions): Promise<Mock
   await page.route(`${API_BASE}/api/projects`, (route: Route) => {
     if (route.request().method() !== "GET") return route.continue();
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(projects) });
+  });
+
+  // CR-CORE-06 (Sprint 8, D26): a plain, non-wildcard exact-URL route — never confused with the
+  // `:id`-scoped wildcard routes below (none of them match a bare `project-groups` segment), same
+  // as the real Indexer's own router registration.
+  await page.route(`${API_BASE}/api/projects/project-groups`, (route: Route) => {
+    if (route.request().method() !== "GET") return route.continue();
+    const groups: MockProjectGroups = options.projectGroups ?? { code: [], cowork: [], chat: [] };
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(groups) });
   });
 
   await page.route(`${API_BASE}/api/projects/browse`, (route: Route) => {
@@ -228,6 +279,20 @@ export async function mockApi(page: Page, options: MockApiOptions): Promise<Mock
     const path = url.searchParams.get("path") ?? "";
     const key = `${projectId}/${path}`;
     const content = options.toolContentByKey?.[key] ?? "";
+    route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ content }) });
+  });
+
+  // CR-CORE-05 (Sprint 8): identical mock treatment to memory-content/tool-content above — `path`
+  // decodes to `{sessionId}/{backupFileName}` (the client builds it that way, see
+  // `fetchFileContent` in src/api/client.ts), so the lookup key is
+  // "<projectId>/<sessionId>/<backupFileName>".
+  await page.route(`${API_BASE}/api/projects/*/file-content*`, (route: Route) => {
+    const url = new URL(route.request().url());
+    const match = url.pathname.match(/\/api\/projects\/([^/]+)\/file-content/);
+    const projectId = match ? decodeURIComponent(match[1]) : "";
+    const path = url.searchParams.get("path") ?? "";
+    const key = `${projectId}/${path}`;
+    const content = options.fileContentByKey?.[key] ?? "";
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ content }) });
   });
 
@@ -366,5 +431,43 @@ export async function clickBanner(
   await page
     .locator(`[data-testid="session-banner-row"][data-session-id="${sessionId}"] [data-banner="${banner}"]`)
     .click();
+}
+
+// CR-CORE-05 (Sprint 8): the File badge is a separate overlay (bottom-left corner, not part of the
+// top `.session-banner-row`) but is a real, directly-clickable HTML button just like the banners
+// above — same plain-click treatment, no canvas-coordinate simulation needed.
+export async function clickFileBadge(page: Page, sessionId: string): Promise<void> {
+  await page.locator(`[data-testid="file-badge"][data-session-id="${sessionId}"]`).click();
+}
+
+// CR-UI-36: a drill-down expand/collapse (banner click, body click) fetches session detail and adds/
+// removes Cytoscape elements, which triggers GraphCanvas's scoped-relayout effect
+// (`cy.layout(freshLayoutOptions()).run()`) asynchronously relative to the Playwright action that
+// caused it. Reading a node's `.position()` immediately after such an action races that layout run —
+// harmless in isolation (fast enough single-test runs never observe it) but a real intermittent
+// failure under full-suite load (confirmed: `cy.nodes('[parentSessionId]').first().position()`
+// returning `undefined` in `cr-ui-29-timeline-cascade.spec.ts`, 2 of 3 full-suite runs).
+//
+// Deliberately NOT implemented as an externally-attached `cy.one("layoutstop", ...)` listener: that
+// approach was tried first and hung indefinitely, because `GraphCanvas`'s own `cy` callback prop runs
+// `cy.off("layoutstop")` (unnamespaced) on every re-render — including the one triggered mid-flight
+// by the expand's own `setExpandedTypes`/`setSessionDetails` calls — which silently strips any
+// externally-registered listener before it ever fires. Instead this polls `graph-status`'s
+// `data-layout-run` counter (CR-UI-36, `GraphCanvas.tsx`), incremented from inside that same
+// internal handler on every "layoutstop" — a value that, unlike an external listener, survives the
+// re-attach cycle because it's read fresh via the DOM, not via a stale closure.
+export async function waitForNextLayoutRun(page: Page, action: () => Promise<void>): Promise<void> {
+  const before = Number(
+    (await page.getByTestId("graph-status").getAttribute("data-layout-run")) ?? "0",
+  );
+  await action();
+  await page.waitForFunction(
+    ([selector, before]) => {
+      const el = document.querySelector(selector as string);
+      const current = Number(el?.getAttribute("data-layout-run") ?? "0");
+      return current > (before as number);
+    },
+    ['[data-testid="graph-status"]', before] as const,
+  );
 }
 

@@ -1,6 +1,6 @@
 {
   "name": "claude-session-explorer-indexer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "description": "Indexer service for Claude Session Explorer: parses Claude Code session/memory/git data into a queryable local SQLite index and serves it over a local-only HTTP API.",
   "type": "module",

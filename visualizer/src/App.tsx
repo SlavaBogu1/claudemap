@@ -5,12 +5,20 @@ import type {
   NodeType,
   NoteEntry,
   Project,
+  ProjectGroupsResponse,
   SelectedGraphItem,
   Session,
   SortName,
   TimeRangeName,
 } from "./types";
-import { fetchProjects, fetchSessions, fetchNotes, fetchClaudeMapNotes, ApiError } from "./api/client";
+import {
+  fetchProjects,
+  fetchProjectGroups,
+  fetchSessions,
+  fetchNotes,
+  fetchClaudeMapNotes,
+  ApiError,
+} from "./api/client";
 import {
   getPreferredLayout,
   setPreferredLayout,
@@ -42,6 +50,10 @@ import "./App.css";
 
 function App() {
   const [projects, setProjects] = useState<Project[]>([]);
+  // CR-CORE-06 (Sprint 8, D26): the Code/Cowork/Chat grouped-dropdown data — `null` until the first
+  // fetch resolves (best-effort: the picker just shows Code-only until/unless it does, same
+  // graceful-degradation pattern as `notes`/`claudeMapNotes` below).
+  const [projectGroups, setProjectGroups] = useState<ProjectGroupsResponse | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -103,6 +115,12 @@ function App() {
       .catch((err) => {
         setLoadError(err instanceof ApiError ? err.message : "Failed to load projects");
       });
+    // CR-CORE-06: best-effort, same pattern as notes/claudeMapNotes below — a failed fetch just
+    // leaves the picker showing Code-only groups (today's existing behavior) rather than blocking
+    // the rest of the app.
+    fetchProjectGroups()
+      .then((g) => setProjectGroups(g))
+      .catch(() => setProjectGroups(null));
   }, []);
 
   // Load sessions whenever the selected project changes.
@@ -134,7 +152,25 @@ function App() {
       .catch(() => setClaudeMapNotes([]));
   }, [selectedProjectId]);
 
-  const selectedProject = projects.find((p) => p.id === selectedProjectId) ?? null;
+  // CR-CORE-06 (Sprint 8, D26): a Cowork/Chat selection's id never appears in `projects` (Code-only,
+  // unchanged scope) — fall back to `projectGroups` and synthesize a `Project`-shaped view (`name`
+  // stands in for `path`; there's no real filesystem path for these, and nothing renders
+  // `lastActiveAt`) so GraphCanvas/DetailPanel need no Cowork/Chat-specific branching at all, per
+  // this CR's "reuse the existing per-project code path" approach.
+  const selectedGroupEntry =
+    projectGroups?.cowork.find((p) => p.id === selectedProjectId) ??
+    projectGroups?.chat.find((p) => p.id === selectedProjectId) ??
+    null;
+  const selectedProject =
+    projects.find((p) => p.id === selectedProjectId) ??
+    (selectedGroupEntry
+      ? {
+          id: selectedGroupEntry.id,
+          path: selectedGroupEntry.name,
+          sessionCount: selectedGroupEntry.sessionCount,
+          lastActiveAt: "",
+        }
+      : null);
   // CR-UI-27: selection lookup stays against the full unfiltered `sessions` — switching time range
   // never force-clears an existing selection, even if the selected session falls outside the newly
   // chosen range (it just temporarily isn't rendered as a node).
@@ -241,6 +277,14 @@ function App() {
         // Best-effort — a failed project-list refetch just leaves sessionCount/lastActiveAt stale
         // until the next successful refresh, not a crash.
       });
+    // CR-CORE-06: keeps a selected Cowork/Chat item's synthesized `sessionCount` (and the picker's
+    // groups generally) from going stale after a mutation — same best-effort pattern as the
+    // `fetchProjects` refetch above.
+    fetchProjectGroups()
+      .then((g) => setProjectGroups(g))
+      .catch(() => {
+        // Best-effort — a failed refetch just leaves the groups stale, not a crash.
+      });
     fetchSessions(selectedProjectId)
       .then((s) => {
         setSessions(s);
@@ -304,6 +348,7 @@ function App() {
           selectedProjectId={selectedProjectId}
           onSelectProject={setSelectedProjectId}
           onProjectsAdded={handleProjectsAdded}
+          projectGroups={projectGroups}
         />
         <LayoutSwitcher layout={layout} onChange={setLayout} />
         {/* CR-UI-23: the header Sort control is disabled outside Hierarchical ("breadthfirst") —

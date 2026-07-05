@@ -30,6 +30,7 @@ describe("GET /api/projects/:id/sessions — memoryTouchCount + toolResultCount 
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: () => {},
       logger: { warn: () => {}, info: () => {} }
     });
@@ -84,6 +85,7 @@ describe("listSessions — memoryTouchCount + toolResultCount with multiple rows
       preview: "multi",
       touchedMemory: true,
       subagentCount: 0,
+      fileCount: 0,
       indexedAt: 1
     });
   });

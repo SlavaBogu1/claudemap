@@ -25,6 +25,7 @@ describe("Custom scan root — POST /api/projects/browse (CR-CORE-02)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: NONEXISTENT_DEFAULT_ROOT,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       logger: { warn: () => {}, info: () => {} }
     });
   });
@@ -99,6 +100,7 @@ describe("Custom scan root persistence across a restart (CR-CORE-02 AC3)", () =>
       indexDb,
       annotationsDb,
       defaultProjectsRoot: NONEXISTENT_DEFAULT_ROOT,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       logger: { warn: () => {}, info: () => {} }
     });
 
@@ -115,6 +117,7 @@ describe("Custom scan root persistence across a restart (CR-CORE-02 AC3)", () =>
       indexDb,
       annotationsDb,
       defaultProjectsRoot: NONEXISTENT_DEFAULT_ROOT,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
       logger: { warn: () => {}, info: () => {} }
     });
 

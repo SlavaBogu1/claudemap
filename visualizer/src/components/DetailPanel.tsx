@@ -54,6 +54,12 @@ export function DetailPanel({
   // Memory Path (memory-touch — `rawId` already *is* the file path), Tool Path / Agent Path
   // (tool/subagent — `filePath`, set by GraphCanvas from `SessionDetail`'s new field, since `rawId`
   // for these two is the notes API's `nodeId`, not a file path).
+  // CR-CORE-05 (Sprint 8): "File Path" added, same pattern as Memory/Tool/Agent Path above — value
+  // is `rawId` (the original tracked-file path, stable across re-versioning), not `filePath`
+  // (which for "file" items carries the version-specific `backupFileName` instead, needed only for
+  // the content-fetch call — see `SelectedGraphItem.filePath`'s doc comment in types.ts). Not
+  // called out explicitly in CR-CORE-05's own text, but a direct extension of an already-approved,
+  // established pattern — flagged in the sprint report rather than silently assumed.
   const pathField =
     selectedItem?.nodeType === "memoryTouch"
       ? { label: "Memory Path", value: selectedItem.rawId }
@@ -61,7 +67,9 @@ export function DetailPanel({
         ? { label: "Tool Path", value: selectedItem.filePath ?? "" }
         : selectedItem?.nodeType === "subagent"
           ? { label: "Agent Path", value: selectedItem.filePath ?? "" }
-          : { label: "Project Path", value: project.path };
+          : selectedItem?.nodeType === "file"
+            ? { label: "File Path", value: selectedItem.rawId }
+            : { label: "Project Path", value: project.path };
 
   async function handleCopyPath() {
     try {
