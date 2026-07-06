@@ -1,11 +1,11 @@
 import Database from "better-sqlite3";
-import type { ClaudeMapNoteRecord, NoteRecord } from "../types.js";
+import type { StickItNoteRecord, NoteRecord } from "../types.js";
 
 export type AnnotationsDb = Database.Database;
 
 /**
  * Open (or create) the durable annotations.db store. This file holds user-authored data only
- * (custom scan roots, D20; notes, CR-UI-08; claude-map notes, CR-CORE-03 — ingest-written, not
+ * (custom scan roots, D20; notes, CR-UI-08; stick-it notes, CR-CORE-03 — ingest-written, not
  * user-authored, but still durable and never rebuildable; bookmarks/links planned per D14) — a
  * rescan/rebuild of index.db must never read from or write to this file (D16).
  */
@@ -29,7 +29,7 @@ export function openAnnotationsDb(filePath: string): AnnotationsDb {
       PRIMARY KEY (project_id, node_type, node_id)
     );
 
-    CREATE TABLE IF NOT EXISTS claude_map_notes (
+    CREATE TABLE IF NOT EXISTS stick_it_notes (
       project_id TEXT NOT NULL,
       node_type TEXT NOT NULL,
       node_id TEXT NOT NULL,
@@ -126,14 +126,14 @@ export function deleteNote(db: AnnotationsDb, projectId: string, nodeType: strin
   return result.changes > 0;
 }
 
-function toClaudeMapNoteRecord(row: {
+function toStickItNoteRecord(row: {
   project_id: string;
   node_type: string;
   node_id: string;
   content: string;
   created_at: string;
   updated_at: string;
-}): ClaudeMapNoteRecord {
+}): StickItNoteRecord {
   return {
     projectId: row.project_id,
     nodeType: row.node_type,
@@ -145,36 +145,36 @@ function toClaudeMapNoteRecord(row: {
 }
 
 /**
- * All claude-map notes for a project (CR-CORE-03) — one aggregated, view-only note per session that
- * has at least one `[claude-map] <text>` marker in its transcript.
+ * All stick-it notes for a project (CR-CORE-03) — one aggregated, view-only note per session that
+ * has at least one `[stick-it] <text>` marker in its transcript.
  */
-export function listClaudeMapNotes(db: AnnotationsDb, projectId: string): ClaudeMapNoteRecord[] {
+export function listStickItNotes(db: AnnotationsDb, projectId: string): StickItNoteRecord[] {
   const rows = db
     .prepare(
       `SELECT project_id, node_type, node_id, content, created_at, updated_at
-       FROM claude_map_notes WHERE project_id = ? ORDER BY node_type, node_id`
+       FROM stick_it_notes WHERE project_id = ? ORDER BY node_type, node_id`
     )
     .all(projectId) as any[];
-  return rows.map(toClaudeMapNoteRecord);
+  return rows.map(toStickItNoteRecord);
 }
 
 /**
- * Create-or-replace a claude-map note (CR-CORE-03), ingest-time only — never called from a
+ * Create-or-replace a stick-it note (CR-CORE-03), ingest-time only — never called from a
  * client-facing endpoint. `created_at` is preserved across updates; `updated_at` always reflects
  * the current write. Unlike `upsertNote`, there is no user-edit path into this table, so a rescan is
  * always free to replace the row's content wholesale (no collision to guard against).
  */
-export function upsertClaudeMapNote(
+export function upsertStickItNote(
   db: AnnotationsDb,
   projectId: string,
   nodeType: string,
   nodeId: string,
   content: string,
   now: () => string = () => new Date().toISOString()
-): ClaudeMapNoteRecord {
+): StickItNoteRecord {
   const timestamp = now();
   db.prepare(
-    `INSERT INTO claude_map_notes (project_id, node_type, node_id, content, created_at, updated_at)
+    `INSERT INTO stick_it_notes (project_id, node_type, node_id, content, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(project_id, node_type, node_id) DO UPDATE SET
        content = excluded.content,
@@ -184,25 +184,25 @@ export function upsertClaudeMapNote(
   const row = db
     .prepare(
       `SELECT project_id, node_type, node_id, content, created_at, updated_at
-       FROM claude_map_notes WHERE project_id = ? AND node_type = ? AND node_id = ?`
+       FROM stick_it_notes WHERE project_id = ? AND node_type = ? AND node_id = ?`
     )
     .get(projectId, nodeType, nodeId) as any;
-  return toClaudeMapNoteRecord(row);
+  return toStickItNoteRecord(row);
 }
 
 /**
- * Deletes a claude-map note, ingest-time only (CR-CORE-03) — used when a rescan finds a session's
- * marker set has become empty (e.g. transcript no longer contains any `[claude-map]` line), so a
+ * Deletes a stick-it note, ingest-time only (CR-CORE-03) — used when a rescan finds a session's
+ * marker set has become empty (e.g. transcript no longer contains any `[stick-it]` line), so a
  * stale aggregated note is never left behind. Returns whether a row actually existed.
  */
-export function deleteClaudeMapNote(
+export function deleteStickItNote(
   db: AnnotationsDb,
   projectId: string,
   nodeType: string,
   nodeId: string
 ): boolean {
   const result = db
-    .prepare(`DELETE FROM claude_map_notes WHERE project_id = ? AND node_type = ? AND node_id = ?`)
+    .prepare(`DELETE FROM stick_it_notes WHERE project_id = ? AND node_type = ? AND node_id = ?`)
     .run(projectId, nodeType, nodeId);
   return result.changes > 0;
 }

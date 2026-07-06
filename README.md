@@ -29,9 +29,9 @@ writes, and decisions buried in the transcript. Claude Session Explorer scans yo
 - **Custom scan roots** — point the tool at any folder containing Claude Code session data (e.g. an
   exported `.claude` directory from another machine), not just the default location.
 - **Open in Explorer** — jump straight to a project's real folder on disk from the graph.
-- **claude-map tagging** — a small slash command you install into any project so you can tag a moment
+- **stick-it tagging** — a small slash command you install into any project so you can tag a moment
   in a live session as it happens; it shows up as a note the next time you visualize that project. See
-  [`claude-map-skill/README.md`](claude-map-skill/README.md).
+  [`stick-it-skill/README.md`](stick-it-skill/README.md).
 
 ## Architecture
 

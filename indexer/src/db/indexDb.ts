@@ -186,7 +186,7 @@ export function listSessionIdsForProject(db: IndexDb, projectId: string): string
  * (CR-CORE-04) Deletes a session row and all of its child rows from index.db — `subagents`,
  * `tool_result_overflows`, `session_memory_touches` — since this schema has no FK cascade. Called
  * only when the session's backing `.jsonl` file has been confirmed gone from disk during a rescan.
- * **Never touches `annotations.db`** (D16): a user note or claude-map note on this session's id
+ * **Never touches `annotations.db`** (D16): a user note or stick-it note on this session's id
  * survives untouched so it isn't lost if the file is later restored/renamed.
  */
 export function deleteSession(db: IndexDb, sessionId: string): void {

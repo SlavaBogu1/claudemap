@@ -139,13 +139,13 @@ export interface NoteEntry {
 }
 
 // CR-CORE-03 (Sprint 6): documented Indexer v1.9 addition. See _API_CONTRACT/CONTRACT.md §
-// Claude-map notes / GET /api/projects/:id/claude-map-notes. Ingest-written, read-only aggregated
-// notes parsed from `[claude-map] <text>` transcript markers — always `nodeType: "session"`, never
+// Stick-it notes / GET /api/projects/:id/stick-it-notes. Ingest-written, read-only aggregated
+// notes parsed from `[stick-it] <text>` transcript markers — always `nodeType: "session"`, never
 // user-editable via the API (no PUT/DELETE), and stored entirely separately from `NoteEntry` above
-// (a distinct `claude_map_notes` table that never collides with the user-editable `notes` table).
+// (a distinct `stick_it_notes` table that never collides with the user-editable `notes` table).
 // Note there is no `format` field here (unlike `NoteEntry`) — this content is always plain
 // concatenated marker text, never a user-chosen format.
-export interface ClaudeMapNoteEntry {
+export interface StickItNoteEntry {
   projectId: string;
   nodeType: NodeType;
   nodeId: string;

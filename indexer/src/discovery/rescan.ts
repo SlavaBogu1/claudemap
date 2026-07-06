@@ -18,7 +18,7 @@ import {
   upsertSession
 } from "../db/indexDb.js";
 import type { AnnotationsDb } from "../db/annotationsDb.js";
-import { deleteClaudeMapNote, upsertClaudeMapNote } from "../db/annotationsDb.js";
+import { deleteStickItNote, upsertStickItNote } from "../db/annotationsDb.js";
 import { parseSessionFile } from "../parsing/sessionParser.js";
 import { parseSubagentMeta } from "../parsing/subagentParser.js";
 import { parseMemoryFile } from "../parsing/memoryParser.js";
@@ -30,7 +30,7 @@ export interface RescanOptions {
   projectsRoots: string[];
   /**
    * (CR-CORE-03) Optional — when provided, a session that's re-parsed this rescan has its
-   * `claude_map_notes` row replaced wholesale from the freshly-parsed marker set (or deleted if that
+   * `stick_it_notes` row replaced wholesale from the freshly-parsed marker set (or deleted if that
    * set is now empty). Optional so callers/tests that only care about index.db (D16: the two files
    * are never conflated) aren't forced to open annotations.db just to call rescan().
    */
@@ -180,10 +180,10 @@ function rescanProjectSessions(
     // table has no user-edit path to collide with (unlike notes/CR-UI-08). Only touched when this
     // session was actually re-parsed this rescan (unchanged sessions are skipped above, D13).
     if (annotationsDb) {
-      if (parsed.claudeMapNotes.length > 0) {
-        upsertClaudeMapNote(annotationsDb, projectId, "session", sessionId, parsed.claudeMapNotes.join("\n\n"));
+      if (parsed.stickItNotes.length > 0) {
+        upsertStickItNote(annotationsDb, projectId, "session", sessionId, parsed.stickItNotes.join("\n\n"));
       } else {
-        deleteClaudeMapNote(annotationsDb, projectId, "session", sessionId);
+        deleteStickItNote(annotationsDb, projectId, "session", sessionId);
       }
     }
 
@@ -209,7 +209,7 @@ function rescanProjectSessions(
 
   // (CR-CORE-04) Prune any previously-indexed session whose backing `.jsonl` file is no longer on
   // disk. Diffed against the on-disk listing just built above (not re-read), so this only ever
-  // deletes index.db rows — annotations.db (notes, claude-map notes) is never touched here (D16):
+  // deletes index.db rows — annotations.db (notes, stick-it notes) is never touched here (D16):
   // if the file is later restored/renamed, its notes are still there under the same session id.
   for (const indexedSessionId of listSessionIdsForProject(db, projectId)) {
     if (!sessionIdsOnDisk.has(indexedSessionId)) {

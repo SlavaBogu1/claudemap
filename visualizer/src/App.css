@@ -414,9 +414,9 @@
   color: var(--text);
 }
 
-/* CR-CORE-03: view-only "claude-map" note section — visually distinct (left accent border, no
+/* CR-CORE-03: view-only "stick-it" note section — visually distinct (left accent border, no
    editable control) from the editable user-note area below it. */
-.claude-map-note {
+.stick-it-note {
   margin-top: 16px;
   padding: 8px 10px;
   border-left: 3px solid var(--accent);
@@ -424,12 +424,12 @@
   border-radius: 0 4px 4px 0;
 }
 
-.claude-map-note h3 {
+.stick-it-note h3 {
   margin: 0 0 4px;
   font-size: 13px;
 }
 
-.claude-map-note-content {
+.stick-it-note-content {
   margin: 0;
   white-space: pre-wrap;
 }

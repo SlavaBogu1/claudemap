@@ -3,7 +3,7 @@ import {
   fetchProjects,
   fetchSessions,
   fetchSessionDetail,
-  fetchClaudeMapNotes,
+  fetchStickItNotes,
   openFolder,
   browseProject,
   ApiError,
@@ -59,7 +59,7 @@ describe("api client", () => {
     expect(result).toEqual(detail);
   });
 
-  it("fetchClaudeMapNotes calls GET /api/projects/:id/claude-map-notes (CR-CORE-03)", async () => {
+  it("fetchStickItNotes calls GET /api/projects/:id/stick-it-notes (CR-CORE-03)", async () => {
     const notes = [
       {
         projectId: "p1",
@@ -71,8 +71,8 @@ describe("api client", () => {
       },
     ];
     mockFetchOnce(notes);
-    const result = await fetchClaudeMapNotes("p1");
-    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects/p1/claude-map-notes`);
+    const result = await fetchStickItNotes("p1");
+    expect(globalThis.fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/projects/p1/stick-it-notes`);
     expect(result).toEqual(notes);
   });
 

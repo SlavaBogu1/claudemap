@@ -133,13 +133,13 @@ export interface NoteRecord {
 }
 
 /**
- * (v1.9, CR-CORE-03) A "claude-map" tagging-skill note: every `[claude-map] <text>` marker message
+ * (v1.9, CR-CORE-03) A "stick-it" tagging-skill note: every `[stick-it] <text>` marker message
  * found in one session's transcript, concatenated into a single row keyed
  * `(projectId, "session", sessionId)`. Ingest-time write only — never user-editable via the API
  * (mirrors `NoteRecord`'s shape minus `format`, since this content is always plain concatenated
  * marker text, not a user-chosen format).
  */
-export interface ClaudeMapNoteRecord {
+export interface StickItNoteRecord {
   projectId: string;
   nodeType: string;
   nodeId: string;

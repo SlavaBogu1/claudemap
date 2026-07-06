@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ClaudeMapNoteEntry, NodeType, NoteEntry, Project, SelectedGraphItem, Session } from "../types";
+import type { StickItNoteEntry, NodeType, NoteEntry, Project, SelectedGraphItem, Session } from "../types";
 import { openFolder } from "../api/client";
 import { ContentTab } from "./ContentTab";
 
@@ -15,9 +15,9 @@ export interface DetailPanelProps {
   // immediately.
   selectedItem: SelectedGraphItem | null;
   notes: NoteEntry[];
-  // CR-CORE-03: read-only, ingest-written "claude-map" notes — passed through to the Content tab's
+  // CR-CORE-03: read-only, ingest-written "stick-it" notes — passed through to the Content tab's
   // view-only section, entirely separate from the editable `notes` above.
-  claudeMapNotes: ClaudeMapNoteEntry[];
+  stickItNotes: StickItNoteEntry[];
   onNoteSaved: (note: NoteEntry) => void;
   onNoteDeleted: (nodeType: NodeType, nodeId: string) => void;
 }
@@ -36,7 +36,7 @@ export function DetailPanel({
   width,
   selectedItem,
   notes,
-  claudeMapNotes,
+  stickItNotes,
   onNoteSaved,
   onNoteDeleted,
 }: DetailPanelProps) {
@@ -243,7 +243,7 @@ export function DetailPanel({
           project={project}
           selectedItem={selectedItem}
           notes={notes}
-          claudeMapNotes={claudeMapNotes}
+          stickItNotes={stickItNotes}
           onNoteSaved={onNoteSaved}
           onNoteDeleted={onNoteDeleted}
         />

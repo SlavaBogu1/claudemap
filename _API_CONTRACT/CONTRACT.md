@@ -9,7 +9,7 @@ Sprint 1 (CR-CORE-01, CR-API-01, CR-CORE-02) implemented, plus hotfix `CR-API-02
 Sprint 2's `CR-UI-06` session detail endpoint, Sprint 3's `CR-UI-07` (session count fields) and
 `CR-UI-08` (notes + content endpoints, see below), Sprint 5's `CR-UI-15` (Agent Path field +
 Agent/Tool content endpoints), `CR-UI-25` (project content endpoint), and `CR-UI-28`
-(`hasNotedDescendant` aggregate), Sprint 6's `CR-CORE-03` (claude-map notes, see below), and Sprint
+(`hasNotedDescendant` aggregate), Sprint 6's `CR-CORE-03` (stick-it notes, see below), and Sprint
 8's `CR-CORE-05` (file-history "File" drill-down type + content endpoint) and `CR-CORE-06` (Claude
 Desktop Cowork/Chat session indexing, see below). All endpoints below are backed by an Express app
 bound to `127.0.0.1` only, port `4317`
@@ -19,7 +19,7 @@ poll/rescan endpoint being required yet.
 
 Bookmarks/links (D14) are not implemented yet — that's a later CR. `annotations.db` holds persisted
 custom scan roots (D20), user-authored notes attached to a graph node (`CR-UI-08`, see `notes` table
-below), and, as of `CR-CORE-03`, ingest-written "claude-map" notes (see `claude_map_notes` table
+below), and, as of `CR-CORE-03`, ingest-written "stick-it" notes (see `stick_it_notes` table
 below).
 
 ## Endpoints
@@ -341,21 +341,21 @@ if omitted).
 **Response 404** (no note existed for that `nodeType`/`nodeId`, or unknown `:id`): `{ "error": "..." }`
 — never a crash on a repeated delete.
 
-### Claude-map notes (v1.9, `CR-CORE-03`)
-The "claude-map" tagging skill (invoked by the user inside any live Claude Code session, e.g.
-`/claude-map <text>`) posts a literal `[claude-map] <text>` marker message into that session's
+### Stick-it notes (v1.9, `CR-CORE-03`)
+The "stick-it" tagging skill (invoked by the user inside any live Claude Code session, e.g.
+`/stick-it <text>`) posts a literal `[stick-it] <text>` marker message into that session's
 transcript as an ordinary user-turn message — no live/networked mechanism, just transcript content
-the Indexer picks up on its next scan like everything else it parses. Every `[claude-map]` marker
+the Indexer picks up on its next scan like everything else it parses. Every `[stick-it]` marker
 found in one session is concatenated into a **single, aggregated, view-only note** for that session
 as a whole (no per-message anchor, no new node type — always `nodeType: "session"`), persisted in a
-dedicated `claude_map_notes` table in `annotations.db` (durable user data, D16) that is entirely
+dedicated `stick_it_notes` table in `annotations.db` (durable user data, D16) that is entirely
 separate from the user-editable `notes` table (`CR-UI-08`) — the two never collide or overwrite each
 other. Unlike `notes`, this content has **no client-facing write path** — it is written only during
 the server's ingest/rescan pass, replacing a session's row wholesale each time that session is
 re-parsed (safe: no user edits exist here to lose). There is accordingly no `PUT`/`DELETE` for this
 resource, only a read endpoint.
 
-`ClaudeMapNoteEntry`:
+`StickItNoteEntry`:
 ```jsonc
 {
   "projectId": "D--Fixture--ProjectOne",
@@ -369,8 +369,8 @@ resource, only a read endpoint.
 Note there is no `format` field here (unlike `NoteEntry`) — this content is always plain concatenated
 marker text, never a user-chosen format.
 
-#### `GET /api/projects/:id/claude-map-notes`
-**Response 200:** `ClaudeMapNoteEntry[]` — one entry per session that has at least one `[claude-map]`
+#### `GET /api/projects/:id/stick-it-notes`
+**Response 200:** `StickItNoteEntry[]` — one entry per session that has at least one `[stick-it]`
 marker (possibly empty for a project with none).
 **Response 404** (unknown `:id`): `{ "error": "Unknown project id: <id>" }`
 
@@ -451,11 +451,11 @@ it's a plain array, no other code changes needed.
   known indexed `file_history_entries.backup_file_name` for the derived session id before ever
   touching disk, same security pattern as `memory-content`/`agent-content`/`tool-content`). No
   changes to any existing endpoint/schema beyond the additive `fileCount` field and `files` array.
-- **v1.9** (2026-07-03, Sprint 6, `CR-CORE-03`) — Added `GET /api/projects/:id/claude-map-notes`
+- **v1.9** (2026-07-03, Sprint 6, `CR-CORE-03`) — Added `GET /api/projects/:id/stick-it-notes`
   (read-only; no `PUT`/`DELETE` — this content has no client-facing write path). Backed by a new
-  `claude_map_notes` table in `annotations.db` (durable user data, D16), separate from and never
+  `stick_it_notes` table in `annotations.db` (durable user data, D16), separate from and never
   colliding with the `notes` table (`CR-UI-08`). Ingest-time only: during the existing session
-  transcript parsing pass, every `[claude-map] <text>` marker message found is concatenated into a
+  transcript parsing pass, every `[stick-it] <text>` marker message found is concatenated into a
   single row keyed `(projectId, "session", sessionId)`, replaced wholesale on each rescan that
   re-parses that session (safe — no user-edit path exists for this table to collide with). No changes
   to any existing endpoint/schema; CORS allowlist/methods unchanged (this is a `GET`, already

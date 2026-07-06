@@ -1,9 +1,9 @@
 import { test, expect } from "@playwright/test";
 import { makeProject, makeSessions, mockApi, clickGraphNode } from "./fixtures";
 
-// CR-CORE-03 acceptance criteria (Visualizer half): claude-map notes fetched alongside user notes,
+// CR-CORE-03 acceptance criteria (Visualizer half): stick-it notes fetched alongside user notes,
 // unioned into the existing badge (one badge per session for either kind, never two); a new
-// view-only section in the Content tab for a session's claude-map note, with no reachable
+// view-only section in the Content tab for a session's stick-it note, with no reachable
 // save/delete control. All against a mocked API — never a live Indexer server.
 
 async function openContentTabFor(page: import("@playwright/test").Page, sessionId: string) {
@@ -11,8 +11,8 @@ async function openContentTabFor(page: import("@playwright/test").Page, sessionI
   await page.getByRole("tab", { name: "Content" }).click();
 }
 
-test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () => {
-  test("a session with only a claude-map note (no user note) shows exactly one badge", async ({
+test.describe("CR-CORE-03 — stick-it notes (badge + view-only content)", () => {
+  test("a session with only a stick-it note (no user note) shows exactly one badge", async ({
     page,
   }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 1 });
@@ -22,7 +22,7 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
     await mockApi(page, {
       projects: [project],
       sessionsByProjectId: { sudoku: sessions },
-      claudeMapNotes: [
+      stickItNotes: [
         {
           projectId: "sudoku",
           nodeType: "session",
@@ -40,7 +40,7 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
     await expect(page.locator(`[data-testid="note-badge"][data-node-id="${target.id}"]`)).toHaveCount(1);
   });
 
-  test("a session with both a user note and a claude-map note still shows exactly one badge (not two)", async ({
+  test("a session with both a user note and a stick-it note still shows exactly one badge (not two)", async ({
     page,
   }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 1 });
@@ -61,7 +61,7 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
           updatedAt: "2026-07-01T00:00:00Z",
         },
       ],
-      claudeMapNotes: [
+      stickItNotes: [
         {
           projectId: "sudoku",
           nodeType: "session",
@@ -89,7 +89,7 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
     await expect(page.locator('[data-testid="note-badge"]')).toHaveCount(0);
   });
 
-  test("the Content tab shows a view-only claude-map section with no reachable save/delete control", async ({
+  test("the Content tab shows a view-only stick-it section with no reachable save/delete control", async ({
     page,
   }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 1 });
@@ -100,7 +100,7 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
       projects: [project],
       sessionsByProjectId: { sudoku: sessions },
       sessionContentByKey: { [`sudoku/${target.id}`]: { messages: [] } },
-      claudeMapNotes: [
+      stickItNotes: [
         {
           projectId: "sudoku",
           nodeType: "session",
@@ -116,10 +116,10 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
     await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
     await openContentTabFor(page, target.id);
 
-    const section = page.getByTestId("claude-map-note");
+    const section = page.getByTestId("stick-it-note");
     await expect(section).toContainText("First tagged moment.");
     await expect(section).toContainText("Second tagged moment.");
-    // No save/delete control reachable within the claude-map section itself.
+    // No save/delete control reachable within the stick-it section itself.
     await expect(section.getByRole("button")).toHaveCount(0);
     await expect(section.locator("textarea")).toHaveCount(0);
 
@@ -127,7 +127,7 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
     await expect(page.getByLabel("Note")).toBeVisible();
   });
 
-  test("a session with no claude-map note shows no claude-map section", async ({ page }) => {
+  test("a session with no stick-it note shows no stick-it section", async ({ page }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 1 });
     const sessions = makeSessions(1);
     const target = sessions[0];
@@ -142,10 +142,10 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
     await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
     await openContentTabFor(page, target.id);
 
-    await expect(page.getByTestId("claude-map-note")).toHaveCount(0);
+    await expect(page.getByTestId("stick-it-note")).toHaveCount(0);
   });
 
-  test("existing CR-UI-08 user-note editing is unaffected by claude-map notes being present", async ({
+  test("existing CR-UI-08 user-note editing is unaffected by stick-it notes being present", async ({
     page,
   }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 1 });
@@ -156,7 +156,7 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
       projects: [project],
       sessionsByProjectId: { sudoku: sessions },
       sessionContentByKey: { [`sudoku/${target.id}`]: { messages: [] } },
-      claudeMapNotes: [
+      stickItNotes: [
         {
           projectId: "sudoku",
           nodeType: "session",
@@ -176,7 +176,7 @@ test.describe("CR-CORE-03 — claude-map notes (badge + view-only content)", () 
     await page.getByRole("button", { name: "Save" }).click();
     await expect.poll(() => handle.notes).toHaveLength(1);
     expect(handle.notes[0]).toMatchObject({ content: "A real user note." });
-    // The claude-map section keeps rendering its own separate content, untouched by the user save.
-    await expect(page.getByTestId("claude-map-note")).toContainText("tagged moment");
+    // The stick-it section keeps rendering its own separate content, untouched by the user save.
+    await expect(page.getByTestId("stick-it-note")).toContainText("tagged moment");
   });
 });

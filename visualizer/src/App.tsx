@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
-  ClaudeMapNoteEntry,
+  StickItNoteEntry,
   LayoutName,
   NodeType,
   NoteEntry,
@@ -16,7 +16,7 @@ import {
   fetchProjectGroups,
   fetchSessions,
   fetchNotes,
-  fetchClaudeMapNotes,
+  fetchStickItNotes,
   ApiError,
 } from "./api/client";
 import {
@@ -52,7 +52,7 @@ function App() {
   const [projects, setProjects] = useState<Project[]>([]);
   // CR-CORE-06 (Sprint 8, D26): the Code/Cowork/Chat grouped-dropdown data — `null` until the first
   // fetch resolves (best-effort: the picker just shows Code-only until/unless it does, same
-  // graceful-degradation pattern as `notes`/`claudeMapNotes` below).
+  // graceful-degradation pattern as `notes`/`stickItNotes` below).
   const [projectGroups, setProjectGroups] = useState<ProjectGroupsResponse | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
@@ -94,18 +94,18 @@ function App() {
   // alongside sessions, so the 📝 indicator renders without a per-node request).
   const [selectedItem, setSelectedItem] = useState<SelectedGraphItem | null>(null);
   const [notes, setNotes] = useState<NoteEntry[]>([]);
-  // CR-CORE-03 (Sprint 6): ingest-written, read-only "claude-map" notes — fetched alongside the
+  // CR-CORE-03 (Sprint 6): ingest-written, read-only "stick-it" notes — fetched alongside the
   // user-editable `notes` above, unioned into `notedKeys` below so a session shows one badge for
   // either kind of note, but kept in a separate array/state throughout (never merged into `notes`
   // itself) since the two are stored/edited entirely separately.
-  const [claudeMapNotes, setClaudeMapNotes] = useState<ClaudeMapNoteEntry[]>([]);
+  const [stickItNotes, setStickItNotes] = useState<StickItNoteEntry[]>([]);
   const notedKeys = useMemo(
     () =>
       new Set([
         ...notes.map((n) => `${n.nodeType}:${n.nodeId}`),
-        ...claudeMapNotes.map((n) => `${n.nodeType}:${n.nodeId}`),
+        ...stickItNotes.map((n) => `${n.nodeType}:${n.nodeId}`),
       ]),
-    [notes, claudeMapNotes],
+    [notes, stickItNotes],
   );
 
   // Load the project list once on mount.
@@ -115,7 +115,7 @@ function App() {
       .catch((err) => {
         setLoadError(err instanceof ApiError ? err.message : "Failed to load projects");
       });
-    // CR-CORE-06: best-effort, same pattern as notes/claudeMapNotes below — a failed fetch just
+    // CR-CORE-06: best-effort, same pattern as notes/stickItNotes below — a failed fetch just
     // leaves the picker showing Code-only groups (today's existing behavior) rather than blocking
     // the rest of the app.
     fetchProjectGroups()
@@ -130,7 +130,7 @@ function App() {
       setSelectedSessionId(null);
       setSelectedItem(null);
       setNotes([]);
-      setClaudeMapNotes([]);
+      setStickItNotes([]);
       return;
     }
     setSelectedSessionId(null);
@@ -147,9 +147,9 @@ function App() {
       .then((n) => setNotes(n))
       .catch(() => setNotes([]));
     // CR-CORE-03: same once-per-project, best-effort fetch pattern as the user notes above.
-    fetchClaudeMapNotes(selectedProjectId)
-      .then((n) => setClaudeMapNotes(n))
-      .catch(() => setClaudeMapNotes([]));
+    fetchStickItNotes(selectedProjectId)
+      .then((n) => setStickItNotes(n))
+      .catch(() => setStickItNotes([]));
   }, [selectedProjectId]);
 
   // CR-CORE-06 (Sprint 8, D26): a Cowork/Chat selection's id never appears in `projects` (Code-only,
@@ -424,7 +424,7 @@ function App() {
               width={detailPanelWidth}
               selectedItem={selectedItem}
               notes={notes}
-              claudeMapNotes={claudeMapNotes}
+              stickItNotes={stickItNotes}
               onNoteSaved={handleNoteSaved}
               onNoteDeleted={handleNoteDeleted}
             />

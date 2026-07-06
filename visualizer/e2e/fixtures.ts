@@ -108,9 +108,9 @@ export interface MockSessionContent {
 }
 
 // CR-CORE-03 (Sprint 6): mock shape for the documented Indexer v1.9 addition
-// (GET /api/projects/:id/claude-map-notes) — never a live Indexer in tests. Read-only: no PUT/DELETE
+// (GET /api/projects/:id/stick-it-notes) — never a live Indexer in tests. Read-only: no PUT/DELETE
 // mock route, matching the real API (ingest-written only, no client-facing write path).
-export interface MockClaudeMapNoteEntry {
+export interface MockStickItNoteEntry {
   projectId: string;
   nodeType: MockNodeType;
   nodeId: string;
@@ -159,9 +159,9 @@ export interface MockApiOptions {
   projectContentByKey?: Record<string, { source: string; content: string | null }>;
   // Seed notes already "saved" before the test interacts with the app.
   initialNotes?: MockNoteEntry[];
-  // CR-CORE-03: seed claude-map notes — read-only for the lifetime of the mocked test (no PUT/DELETE
+  // CR-CORE-03: seed stick-it notes — read-only for the lifetime of the mocked test (no PUT/DELETE
   // route exists for this resource, matching the real, ingest-only API).
-  claudeMapNotes?: MockClaudeMapNoteEntry[];
+  stickItNotes?: MockStickItNoteEntry[];
 }
 
 export interface MockApiHandle {
@@ -316,12 +316,12 @@ export async function mockApi(page: Page, options: MockApiOptions): Promise<Mock
 
   // CR-CORE-03 (Sprint 6): read-only — no PUT/DELETE route, matching the real API exactly (this
   // resource is ingest-written only, never user-editable via the client).
-  await page.route(`${API_BASE}/api/projects/*/claude-map-notes`, (route: Route) => {
+  await page.route(`${API_BASE}/api/projects/*/stick-it-notes`, (route: Route) => {
     if (route.request().method() !== "GET") return route.continue();
     const url = route.request().url();
-    const match = url.match(/\/api\/projects\/([^/]+)\/claude-map-notes/);
+    const match = url.match(/\/api\/projects\/([^/]+)\/stick-it-notes/);
     const projectId = match ? decodeURIComponent(match[1]) : "";
-    const projectNotes = (options.claudeMapNotes ?? []).filter((n) => n.projectId === projectId);
+    const projectNotes = (options.stickItNotes ?? []).filter((n) => n.projectId === projectId);
     route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(projectNotes) });
   });
 

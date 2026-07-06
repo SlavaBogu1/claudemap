@@ -22,7 +22,7 @@ import type { AnnotationsDb } from "../../db/annotationsDb.js";
 import {
   addScanRoot,
   deleteNote,
-  listClaudeMapNotes,
+  listStickItNotes,
   listNotes,
   listScanRoots,
   upsertNote
@@ -95,7 +95,7 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
   /**
    * Every GET (and the mutating POST/PUT/DELETE routes below) triggers this incremental rescan
    * first (D13). Passing `annotationsDb` lets the rescan persist/replace each re-parsed session's
-   * `claude_map_notes` row (CR-CORE-03) alongside the existing index.db bookkeeping.
+   * `stick_it_notes` row (CR-CORE-03) alongside the existing index.db bookkeeping.
    */
   function doRescan(projectsRoots: string[] = resolveAllKnownRoots(options)): void {
     rescan({ db: indexDb, projectsRoots, annotationsDb: options.annotationsDb, logger });
@@ -440,16 +440,16 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
     res.json(listNotes(options.annotationsDb, id));
   });
 
-  // (v1.9, CR-CORE-03) Read-only — claude-map notes have no user-edit path, so unlike /notes there's
+  // (v1.9, CR-CORE-03) Read-only — stick-it notes have no user-edit path, so unlike /notes there's
   // no PUT/DELETE here; write access happens only during doRescan()'s ingest pass above.
-  router.get("/:id/claude-map-notes", (req, res) => {
+  router.get("/:id/stick-it-notes", (req, res) => {
     doRescan();
     const { id } = req.params;
     if (!projectExists(indexDb, id)) {
       res.status(404).json({ error: `Unknown project id: ${id}` });
       return;
     }
-    res.json(listClaudeMapNotes(options.annotationsDb, id));
+    res.json(listStickItNotes(options.annotationsDb, id));
   });
 
   router.put("/:id/notes/:nodeType/:nodeId", (req, res) => {

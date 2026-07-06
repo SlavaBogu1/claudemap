@@ -23,12 +23,12 @@ export interface ParsedSession {
   memoryTouches: string[];
   overflows: ToolResultOverflowRecord[];
   /**
-   * (CR-CORE-03) Every `[claude-map] <text>` marker found in this session's user-turn messages, in
+   * (CR-CORE-03) Every `[stick-it] <text>` marker found in this session's user-turn messages, in
    * transcript order — the caller (discovery/rescan.ts) concatenates these into a single aggregated
-   * claude_map_notes row for the session. Empty when the "claude-map" tagging skill was never
+   * stick_it_notes row for the session. Empty when the "stick-it" tagging skill was never
    * invoked in this session.
    */
-  claudeMapNotes: string[];
+  stickItNotes: string[];
   /**
    * (CR-CORE-05) Every unique file path ever backed up in this session, merged across all
    * `file-history-snapshot` lines and keeping the highest `version` per path.
@@ -39,16 +39,16 @@ export interface ParsedSession {
 const COMMAND_TAG_RE = /<\/?(?:local-)?command-[a-z-]+>/gi;
 const PERSISTED_OUTPUT_RE = /Full output saved to:\s*([^\r\n]+)/i;
 /**
- * (CR-CORE-03) The "claude-map" tagging skill posts a literal `[claude-map] <text>` message into a
+ * (CR-CORE-03) The "stick-it" tagging skill posts a literal `[stick-it] <text>` message into a
  * user turn. Matches once per occurrence within a message's text — `.` doesn't span newlines (no
  * `s` flag), so multiple marker lines within one message are each captured separately.
  */
-const CLAUDE_MAP_MARKER_RE = /\[claude-map\]\s*(.+)/gi;
+const STICK_IT_MARKER_RE = /\[stick-it\]\s*(.+)/gi;
 
-function extractClaudeMapMarkers(text: string | null): string[] {
+function extractStickItMarkers(text: string | null): string[] {
   if (!text) return [];
   const matches: string[] = [];
-  const re = new RegExp(CLAUDE_MAP_MARKER_RE.source, CLAUDE_MAP_MARKER_RE.flags);
+  const re = new RegExp(STICK_IT_MARKER_RE.source, STICK_IT_MARKER_RE.flags);
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const captured = m[1].trim();
@@ -74,7 +74,7 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
   let touchedMemory = false;
   const memoryTouches = new Set<string>();
   const overflows: ToolResultOverflowRecord[] = [];
-  const claudeMapNotes: string[] = [];
+  const stickItNotes: string[] = [];
   // (CR-CORE-05) Keyed by file path; a later snapshot line can bump an existing path's version or
   // introduce a new path — always keep the highest version seen per path across the whole session.
   const fileHistoryByPath = new Map<string, ParsedFileHistoryEntry>();
@@ -145,7 +145,7 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
 
     if (entry.type === "user") {
       // (CR-CORE-03 fix) Marker extraction runs against every user-turn entry regardless of
-      // `isMeta` — a real slash-command/skill invocation lands its literal `[claude-map] <text>`
+      // `isMeta` — a real slash-command/skill invocation lands its literal `[stick-it] <text>`
       // marker text in a *separate*, `isMeta: true` entry immediately following the (marker-less)
       // command envelope entry. Excluding `isMeta` here (as the code used to) meant a real
       // invocation's marker could never be detected — see BACKLOG.md CR-CORE-03, 2026-07-04
@@ -153,7 +153,7 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
       const userText = extractUserMessageText(content ?? entry.message?.content);
 
       if (userText !== null) {
-        claudeMapNotes.push(...extractClaudeMapMarkers(userText));
+        stickItNotes.push(...extractStickItMarkers(userText));
       }
 
       if (!entry.isMeta) {
@@ -198,7 +198,7 @@ export function parseSessionFile(filePath: string, sessionId: string, logger: Lo
     touchedMemory,
     memoryTouches: Array.from(memoryTouches),
     overflows,
-    claudeMapNotes,
+    stickItNotes,
     fileHistory: Array.from(fileHistoryByPath.values())
   };
 }

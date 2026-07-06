@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { SafeMarkdown } from "./SafeMarkdown";
 import type {
-  ClaudeMapNoteEntry,
+  StickItNoteEntry,
   NodeType,
   NoteEntry,
   Project,
@@ -29,9 +29,9 @@ export interface ContentTabProps {
   project: Project;
   selectedItem: SelectedGraphItem | null;
   notes: NoteEntry[];
-  // CR-CORE-03: read-only, ingest-written "claude-map" notes — rendered in an additional, view-only
+  // CR-CORE-03: read-only, ingest-written "stick-it" notes — rendered in an additional, view-only
   // section below, entirely separate from the editable user-note textarea/state above.
-  claudeMapNotes: ClaudeMapNoteEntry[];
+  stickItNotes: StickItNoteEntry[];
   onNoteSaved: (note: NoteEntry) => void;
   onNoteDeleted: (nodeType: NodeType, nodeId: string) => void;
 }
@@ -136,7 +136,7 @@ export function ContentTab({
   project,
   selectedItem,
   notes,
-  claudeMapNotes,
+  stickItNotes,
   onNoteSaved,
   onNoteDeleted,
 }: ContentTabProps) {
@@ -167,12 +167,12 @@ export function ContentTab({
     ? (notes.find((n) => n.nodeType === selectedItem.nodeType && n.nodeId === selectedItem.rawId) ?? null)
     : null;
 
-  // CR-CORE-03: claude-map notes are always keyed `nodeType: "session"` (no per-message anchor, no
-  // new node type — every `[claude-map]` tag in a session aggregates into one note on the session as
+  // CR-CORE-03: stick-it notes are always keyed `nodeType: "session"` (no per-message anchor, no
+  // new node type — every `[stick-it]` tag in a session aggregates into one note on the session as
   // a whole), so this only ever resolves for a "session" selection, never a sub-item/project one.
-  const claudeMapNote =
+  const stickItNote =
     selectedItem && selectedItem.nodeType === "session"
-      ? (claudeMapNotes.find(
+      ? (stickItNotes.find(
           (n) => n.nodeType === selectedItem.nodeType && n.nodeId === selectedItem.rawId,
         ) ?? null)
       : null;
@@ -494,13 +494,13 @@ export function ContentTab({
           ))}
       </div>
 
-      {/* CR-CORE-03: view-only, ingest-written "claude-map" note — a separate, clearly-labeled
+      {/* CR-CORE-03: view-only, ingest-written "stick-it" note — a separate, clearly-labeled
           section from the editable user-note below (no edit/save/delete control reachable here;
           this content has no client-facing write path at all, per the API contract). */}
-      {claudeMapNote && (
-        <div className="claude-map-note" data-testid="claude-map-note">
-          <h3>Claude-map notes</h3>
-          <p className="claude-map-note-content">{claudeMapNote.content}</p>
+      {stickItNote && (
+        <div className="stick-it-note" data-testid="stick-it-note">
+          <h3>Stick-it notes</h3>
+          <p className="stick-it-note-content">{stickItNote.content}</p>
         </div>
       )}
 

@@ -11,12 +11,12 @@ import {
   listSessionIdsForProject,
   listMemoryFilePathsForProject
 } from "../src/db/indexDb.js";
-import { openAnnotationsDb, type AnnotationsDb, upsertNote, listNotes, upsertClaudeMapNote, listClaudeMapNotes } from "../src/db/annotationsDb.js";
+import { openAnnotationsDb, type AnnotationsDb, upsertNote, listNotes, upsertStickItNote, listStickItNotes } from "../src/db/annotationsDb.js";
 import { rescan } from "../src/discovery/rescan.js";
 
 // CR-CORE-04 — a session/memory file deleted from disk must have its stale index.db rows pruned on
 // the next rescan (wrong session counts, Content-tab read errors otherwise). D16 invariant:
-// annotations.db (notes, claude-map notes) must NEVER be touched by this pruning — a note on a
+// annotations.db (notes, stick-it notes) must NEVER be touched by this pruning — a note on a
 // since-deleted session must survive untouched in case the file is later restored/renamed.
 
 describe("deleted-session / deleted-memory-file pruning (CR-CORE-04)", () => {
@@ -56,11 +56,11 @@ describe("deleted-session / deleted-memory-file pruning (CR-CORE-04)", () => {
     expect(touchRows).toHaveLength(0);
   });
 
-  it("D16: a user note and a claude-map note on a since-deleted session survive untouched in annotations.db", () => {
+  it("D16: a user note and a stick-it note on a since-deleted session survive untouched in annotations.db", () => {
     rescan({ db, projectsRoots: [fixture.projectsRoot], annotationsDb });
 
     upsertNote(annotationsDb, fixture.projectDirName, "session", "session-bbb", "Revisit this later.", "markdown");
-    upsertClaudeMapNote(annotationsDb, fixture.projectDirName, "session", "session-bbb", "Tagged moment.");
+    upsertStickItNote(annotationsDb, fixture.projectDirName, "session", "session-bbb", "Tagged moment.");
 
     fs.rmSync(fixture.sessionBbbPath);
     const stats = rescan({ db, projectsRoots: [fixture.projectsRoot], annotationsDb });
@@ -68,12 +68,12 @@ describe("deleted-session / deleted-memory-file pruning (CR-CORE-04)", () => {
     expect(stats.sessionsDeleted).toBe(1);
     expect(sessionExists(db, fixture.projectDirName, "session-bbb")).toBe(false);
 
-    // The note/claude-map note must still exist, completely unaffected by the index.db pruning.
+    // The note/stick-it note must still exist, completely unaffected by the index.db pruning.
     const notes = listNotes(annotationsDb, fixture.projectDirName);
     expect(notes.some((n) => n.nodeType === "session" && n.nodeId === "session-bbb")).toBe(true);
 
-    const claudeMapNotes = listClaudeMapNotes(annotationsDb, fixture.projectDirName);
-    expect(claudeMapNotes.some((n) => n.nodeType === "session" && n.nodeId === "session-bbb")).toBe(true);
+    const stickItNotes = listStickItNotes(annotationsDb, fixture.projectDirName);
+    expect(stickItNotes.some((n) => n.nodeType === "session" && n.nodeId === "session-bbb")).toBe(true);
   });
 
   it("an unrelated still-existing session is untouched by a rescan that prunes a different, deleted session", () => {
