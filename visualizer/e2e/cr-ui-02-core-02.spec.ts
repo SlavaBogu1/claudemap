@@ -177,7 +177,12 @@ test.describe("CR-CORE-08 — remove a persisted custom scan root", () => {
     await page.getByRole("button", { name: "Scan" }).click();
 
     // Scanning closes the panel on success; reopen to see the added-roots list.
-    await expect(page.getByLabel(/path/i)).toHaveCount(0);
+    // Scoped to the browse dialog itself (not a bare `getByLabel(/path/i)`) — once the scan
+    // auto-selects the newly-added project, DetailPanel renders its own "Project Path" field
+    // (CR-UI-15's per-item-type path field, aria-label="Project Path"), which also matches
+    // a case-insensitive /path/i regex and would falsely keep the count at 1 even though the
+    // browse panel itself has correctly closed.
+    await expect(page.getByRole("dialog", { name: "Browse for a project folder" })).toHaveCount(0);
     await page.getByLabel("Project", { exact: true }).selectOption("__browse__");
 
     await expect(page.getByText("D:\\exported\\.claude")).toBeVisible();
