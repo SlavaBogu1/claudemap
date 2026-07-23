@@ -2,6 +2,9 @@
 // Indexer's runtime constants. If SHARED_CONSTANTS.md changes, update this file to match.
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const LOG_LEVEL = 'error';
 
 /** Resolve the Claude Code home directory ({CLAUDE_HOME}), OS-aware. */
 export function resolveClaudeHome(): string {
@@ -24,15 +27,37 @@ export function defaultFileHistoryRoot(): string {
 }
 
 /**
- * (CR-CORE-06) Resolve Claude Desktop's own app-data home, OS-aware — a wholly separate data source
- * from `resolveClaudeHome()`'s `~/.claude` (Claude Code CLI). Windows-specific (`%APPDATA%\Claude`);
- * env-var-overridable following the `resolveClaudeHome()` precedent so it's testable without
- * touching a real `%APPDATA%` path.
+ * (CR-CORE-06, extended CR-CORE-09) Resolve Claude Desktop's own app-data home, OS-aware — a wholly
+ * separate data source from `resolveClaudeHome()`'s `~/.claude` (Claude Code CLI). Branches on
+ * `os.platform()`: `win32` → `%APPDATA%\Claude` (unchanged); `darwin` → `~/Library/Application
+ * Support/Claude`; `linux` → `${XDG_CONFIG_HOME}/Claude` if set, else `~/.config/Claude`; any other
+ * platform value falls back to the `linux` convention with a logged warning rather than throwing.
+ * `CLAUDE_DESKTOP_HOME` env override still wins on every platform, following the
+ * `resolveClaudeHome()` precedent, so it's testable without touching a real app-data path.
+ *
+ * Caveat: the macOS/Linux branches are inferred from standard Electron app-data conventions, not
+ * confirmed against a real Claude Desktop install on those OSes (none available in this
+ * environment) — confirm for real once macOS/Linux porting actually starts.
  */
 export function resolveClaudeDesktopHome(): string {
   if (process.env.CLAUDE_DESKTOP_HOME) return process.env.CLAUDE_DESKTOP_HOME;
-  const appData = process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
-  return path.join(appData, "Claude");
+
+  const platform = os.platform();
+  switch (platform) {
+    case "win32": {
+      const appData = process.env.APPDATA ?? path.join(os.homedir(), "AppData", "Roaming");
+      return path.join(appData, "Claude");
+    }
+    case "darwin":
+      return path.join(os.homedir(), "Library", "Application Support", "Claude");
+    case "linux":
+      return path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config"), "Claude");
+    default:
+      console.warn(
+        `resolveClaudeDesktopHome: unrecognized platform '${platform}', falling back to Linux/XDG convention`
+      );
+      return path.join(process.env.XDG_CONFIG_HOME ?? path.join(os.homedir(), ".config"), "Claude");
+  }
 }
 
 /**
@@ -60,5 +85,20 @@ export const ALLOWED_ORIGINS: string[] = [
   "http://127.0.0.1:5173"
 ];
 
-export const INDEX_DB_PATH = path.join("data", "index.db");
-export const ANNOTATIONS_DB_PATH = path.join("data", "annotations.db");
+/**
+ * (CR-CORE-10) The Indexer package's own root directory, derived from this source file's own
+ * location rather than `process.cwd()` — this file lives at `{packageRoot}/src/config.ts` at
+ * source time and `{packageRoot}/dist/config.js` once built, so walking one directory up from
+ * `import.meta.url` reaches `{packageRoot}` either way. Using `process.cwd()`-relative paths broke
+ * portability (CR-CORE-10): the database ended up under whatever directory the process happened to
+ * be *started* from (e.g. the workspace root via `npm run start`, or a completely different
+ * directory on another machine), not a fixed location — so a fresh cache appeared to replace real
+ * indexed data instead of the same `indexer/data/index.db` being found and reused.
+ */
+function getIndexerRoot(): string {
+  const thisFileDir = path.dirname(fileURLToPath(import.meta.url));
+  return path.join(thisFileDir, "..");
+}
+
+export const INDEX_DB_PATH = path.join(getIndexerRoot(), "data", "index.db");
+export const ANNOTATIONS_DB_PATH = path.join(getIndexerRoot(), "data", "annotations.db");

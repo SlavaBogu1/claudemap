@@ -54,6 +54,15 @@ export function listScanRoots(db: AnnotationsDb): string[] {
   return rows.map((r) => r.path);
 }
 
+/**
+ * (CR-CORE-08) Removes a persisted custom scan root added via `addScanRoot`. A no-op (not an
+ * error) if `browsedPath` isn't currently persisted — removing an already-removed/non-existent
+ * root must never crash, only a real database error should throw.
+ */
+export function deleteScanRoot(db: AnnotationsDb, browsedPath: string): void {
+  db.prepare(`DELETE FROM scan_roots WHERE path = ?`).run(browsedPath);
+}
+
 function toNoteRecord(row: {
   project_id: string;
   node_type: string;

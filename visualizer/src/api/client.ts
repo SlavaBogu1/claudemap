@@ -254,3 +254,19 @@ export async function browseProject(path: string): Promise<Project[]> {
   // Contract allows either a single project object or an array of them.
   return Array.isArray(data) ? (data as Project[]) : [data as Project];
 }
+
+// CR-CORE-08 (Sprint 9): documented Indexer v1.13 addition. See _API_CONTRACT/CONTRACT.md §
+// DELETE /api/projects/browse. Removes a previously-persisted custom scan root. Per the contract,
+// 200 { ok: true } is returned whether or not `path` was actually persisted — a no-op removal is
+// never an error, so callers don't need to special-case "already gone".
+export async function removeProjectBrowseRoot(path: string): Promise<{ ok: true }> {
+  const res = await fetch(`${API_BASE_URL}/api/projects/browse`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    throw new ApiError(await extractErrorMessage(res), res.status);
+  }
+  return (await res.json()) as { ok: true };
+}

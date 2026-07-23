@@ -3,6 +3,7 @@ import path from "node:path";
 import { Router } from "express";
 import type { IndexDb } from "../../db/indexDb.js";
 import {
+  deleteProjectsByRoot,
   fileHistoryBackupExists,
   getProjectPath,
   getSessionDetail,
@@ -22,6 +23,7 @@ import type { AnnotationsDb } from "../../db/annotationsDb.js";
 import {
   addScanRoot,
   deleteNote,
+  deleteScanRoot,
   listStickItNotes,
   listNotes,
   listScanRoots,
@@ -171,6 +173,34 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
     addScanRoot(options.annotationsDb, browsedPath);
     doRescan([resolvedRoot]);
     res.json(listProjectsByRoot(indexDb, resolvedRoot));
+  });
+
+  // (v1.13, CR-CORE-08) Removes a previously-added custom scan root. Unlike POST /browse, this
+  // does not validate that browsedPath still resolves to real session data on disk — that's
+  // exactly the "gone stale" case this endpoint exists to clean up (a root that stopped resolving
+  // could never be removed before this, since resolveProjectsRoot would reject it). Removing a
+  // path that was never persisted (or already removed) is a clean no-op, not an error, matching
+  // deleteScanRoot's own no-op-on-miss semantics.
+  //
+  // Beyond removing the annotations.db row, this also deletes any index.db project rows that were
+  // scanned under this root (deleteProjectsByRoot) — CR-CORE-04's per-file pruning only prunes
+  // sessions/memory-files *within* a root still being actively scanned, so without this step a
+  // removed root's projects would otherwise linger in `GET /api/projects` forever, never pruned by
+  // any rescan (the root simply stops being walked at all). Checked against both string forms a
+  // resolved root can take relative to the persisted browsedPath (itself, or its `projects/`
+  // subfolder) so this still works even when the path no longer resolves on disk at all.
+  router.delete("/browse", (req, res) => {
+    const browsedPath = req.body?.path;
+    if (typeof browsedPath !== "string" || browsedPath.trim().length === 0) {
+      res.status(400).json({ error: "Request body must include a non-empty string 'path'." });
+      return;
+    }
+
+    deleteScanRoot(options.annotationsDb, browsedPath);
+    deleteProjectsByRoot(indexDb, browsedPath);
+    deleteProjectsByRoot(indexDb, path.join(browsedPath, "projects"));
+    doRescan();
+    res.json({ ok: true });
   });
 
   router.post("/:id/open-folder", (req, res) => {

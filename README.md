@@ -45,20 +45,49 @@ Two local services, no external dependencies:
 The Indexer's database is a rebuildable cache — delete it any time and it re-parses from your session
 files. User-added scan roots are stored separately so they survive a cache rebuild.
 
-## Running locally
+## Setup & Installation
 
-One command, from the repo root:
+### First Time Setup
+
+From the repo root:
 
 ```bash
-npm install
+npm ci
 npm run start
 ```
 
-This installs both `indexer/` and `visualizer/` (npm workspaces) and launches them together in
-production-style mode — the Indexer's normal server plus a `vite build` + `vite preview` of the
-Visualizer — with labeled, colored output per service. Open **http://localhost:5173** in your
-browser once both are up. The project picker populates from your real `~/.claude/projects/`
-directory.
+**What this does:**
+- `npm ci` (clean install) — restores exact dependency versions for all packages (root + indexer + visualizer) using lock files
+- `npm run start` — builds both services and launches them together in production mode
+
+Open **http://localhost:5173** in your browser once both are up. The project picker populates from your real `~/.claude/projects/` directory.
+
+### Transferring Between Systems (Restore After Download/Copy)
+
+This project is designed to be fully portable. When you transfer it to a new system:
+
+```bash
+npm ci
+```
+
+That's it! The lock files (`package-lock.json`, `indexer/package-lock.json`, `visualizer/package-lock.json`) ensure exact version reproducibility across systems.
+
+**Why portable:**
+- `package-lock.json` files are committed to git — they lock all dependency versions
+- `node_modules/` is in `.gitignore` — never transferred
+- npm workspaces (`package.json` root config) — manages all three packages as one
+- **Result:** Clone/copy the repo → run `npm ci` → instantly ready
+
+### Choosing Your Installation Method
+
+| Command | When to use | Speed |
+|---------|-------------|-------|
+| `npm ci` | Transfer to new system, CI/CD, reproducible builds | Fast (uses lock files) |
+| `npm install` | First-time setup, updating dependencies | Slower (resolves versions) |
+
+**Recommendation:** Always use `npm ci` for transfers and deployments; use `npm install` only when intentionally updating dependencies.
+
+### CORS & Port Configuration
 
 > The Indexer only accepts requests from `http://localhost:5173` / `http://127.0.0.1:5173` (CORS
 > allowlist) — the root `start` script pins the Visualizer's preview server to port `5173` (Vite's
@@ -68,31 +97,44 @@ directory.
 
 ## Development
 
-Prefer working on one service at a time with hot reload? Use two terminals instead of the
-one-command path above:
+Prefer working on one service at a time with hot reload? Use two terminals:
 
 ```bash
+# From repo root, install once
+npm ci
+
 # Terminal 1 — Indexer (backend API)
-cd indexer
-npm install
-npm run dev
+npm run dev -w indexer
 # → http://127.0.0.1:4317
 ```
 
 ```bash
 # Terminal 2 — Visualizer (frontend)
-cd visualizer
-npm install
-npm run dev
+npm run dev -w visualizer
 # → http://localhost:5173
 ```
 
-Test/build commands, per package:
+### Testing & Building
+
+Individual package commands (from the package directory or using `-w` flag from root):
+
+```bash
+# From root, run tests for a specific package:
+npm test -w indexer              # vitest (Indexer unit tests)
+npm run test:e2e -w indexer      # Playwright (Indexer integration)
+npm run build -w indexer
+
+npm test -w visualizer           # vitest (Visualizer unit tests)
+npm run test:e2e -w visualizer   # Playwright (browser-level)
+npm run build -w visualizer
+```
+
+Or work inside the package directory:
 
 ```bash
 cd indexer
 npm test            # vitest
-npm run test:e2e    # Playwright (real browser, real CORS checks)
+npm run test:e2e    # Playwright
 npm run build
 
 cd visualizer

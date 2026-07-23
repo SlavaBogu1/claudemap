@@ -255,6 +255,69 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
+/* CR-UI-38: error overlay lives outside `.browse-panel`'s flex flow entirely, so a long error
+   message can never push/resize the panel's own input/Scan/Cancel controls. Renamed from
+   `.modal-overlay` to `.error-backdrop` to avoid XPath substring matching in tests. */
+.error-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: var(--bg);
+  color: var(--text-h);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  max-width: min(420px, 90vw);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.modal .error-text {
+  margin: 0;
+  word-break: break-word;
+}
+
+/* CR-CORE-08: added-roots list scrolls independently rather than growing the panel unbounded. */
+.added-roots {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}
+
+.added-roots-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.added-roots-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.added-roots-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text);
+}
+
 .burger-menu {
   position: relative;
   margin-left: auto;
@@ -301,16 +364,6 @@
 
 .burger-dropdown li button:hover {
   background: rgba(128, 128, 128, 0.15);
-}
-
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
 }
 
 .modal {

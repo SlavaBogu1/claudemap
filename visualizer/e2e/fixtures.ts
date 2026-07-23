@@ -140,6 +140,9 @@ export interface MockApiOptions {
   // groups render — the picker just shows Code, today's existing behavior).
   projectGroups?: MockProjectGroups;
   browseResponse?: { status: number; body: unknown };
+  // CR-CORE-08 (Sprint 9): response for DELETE /api/projects/browse. Omitted -> `{ ok: true }` /
+  // 200, matching the real contract's "always a clean 200, even for an unknown path" behavior.
+  browseRemoveResponse?: { status: number; body: unknown };
   // Keyed by "<projectId>/<sessionId>". Sessions with no entry get an all-empty detail response.
   sessionDetailByKey?: Record<string, MockSessionDetail>;
   // Keyed by "<projectId>/<sessionId>". Sessions with no entry get an empty-messages response.
@@ -171,6 +174,8 @@ export interface MockApiHandle {
   // CR-UI-08: live, mutated in place as the app calls PUT/DELETE on the notes endpoints — read this
   // after an interaction to assert what got persisted.
   notes: MockNoteEntry[];
+  // CR-CORE-08: paths passed to DELETE /api/projects/browse, in call order.
+  browseRemoveCalls: string[];
 }
 
 export async function mockApi(page: Page, options: MockApiOptions): Promise<MockApiHandle> {
@@ -179,6 +184,7 @@ export async function mockApi(page: Page, options: MockApiOptions): Promise<Mock
     sessionsRequestCount: {},
     detailRequestCount: {},
     notes: [...(options.initialNotes ?? [])],
+    browseRemoveCalls: [],
   };
   let projects = options.projects;
 
@@ -197,6 +203,17 @@ export async function mockApi(page: Page, options: MockApiOptions): Promise<Mock
   });
 
   await page.route(`${API_BASE}/api/projects/browse`, (route: Route) => {
+    const req = route.request();
+    if (req.method() === "DELETE") {
+      const body = req.postDataJSON() as { path: string };
+      handle.browseRemoveCalls.push(body.path);
+      const resp = options.browseRemoveResponse ?? { status: 200, body: { ok: true } };
+      return route.fulfill({
+        status: resp.status,
+        contentType: "application/json",
+        body: JSON.stringify(resp.body),
+      });
+    }
     const resp = options.browseResponse ?? { status: 200, body: [] };
     if (resp.status >= 200 && resp.status < 300) {
       const added = Array.isArray(resp.body) ? (resp.body as MockProject[]) : [resp.body as MockProject];

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Project, ProjectGroupsResponse } from "../types";
-import { browseProject, ApiError } from "../api/client";
+import { browseProject, removeProjectBrowseRoot, ApiError } from "../api/client";
 
 export interface ProjectPickerProps {
   projects: Project[];
@@ -42,6 +42,17 @@ export function ProjectPicker({
   const [browsePath, setBrowsePath] = useState("");
   const [browseError, setBrowseError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  // CR-UI-38: the error's own presence is the modal's visibility — no separate boolean needed,
+  // since there's never a case where the modal should show without an error message to display.
+  // CR-CORE-08: no "list persisted roots" endpoint exists on the Indexer (see _API_CONTRACT/
+  // CONTRACT.md — only POST/DELETE .../browse). `POST /api/projects/browse`'s response already
+  // returns the project(s) discovered for a given root, so roots added-via-browse this session are
+  // tracked here client-side rather than fetched; a full "list all historically-persisted roots
+  // since app start" isn't achievable without a new endpoint (ProductOwner-scoped judgment call,
+  // see SPRINT9_REPORT.md).
+  const [addedRoots, setAddedRoots] = useState<{ path: string; projects: Project[] }[]>([]);
+  const [removingPath, setRemovingPath] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   function handleSelectChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const value = e.target.value;
@@ -55,12 +66,16 @@ export function ProjectPicker({
   async function handleScan() {
     setBrowseError(null);
     setScanning(true);
+    const scannedPath = browsePath.trim();
     try {
-      const added = await browseProject(browsePath.trim());
+      const added = await browseProject(scannedPath);
       onProjectsAdded(added);
+      setAddedRoots((prev) => [...prev.filter((r) => r.path !== scannedPath), { path: scannedPath, projects: added }]);
       setBrowsePath("");
       setBrowseOpen(false);
     } catch (err) {
+      // VZ-9.2 (CR-UI-38): full error visible in the dev console in addition to the UI modal.
+      console.error(err);
       if (err instanceof ApiError) {
         setBrowseError(err.message);
       } else {
@@ -68,6 +83,31 @@ export function ProjectPicker({
       }
     } finally {
       setScanning(false);
+    }
+  }
+
+  function dismissBrowseError() {
+    setBrowseError(null);
+  }
+
+  // CR-CORE-08: remove a persisted custom scan root via the new DELETE endpoint. The contract
+  // returns 200 { ok: true } even for an already-removed/unknown path, so there's no "not found"
+  // branch to special-case here.
+  async function handleRemoveRoot(path: string) {
+    setRemoveError(null);
+    setRemovingPath(path);
+    try {
+      await removeProjectBrowseRoot(path);
+      setAddedRoots((prev) => prev.filter((r) => r.path !== path));
+    } catch (err) {
+      console.error(err);
+      if (err instanceof ApiError) {
+        setRemoveError(err.message);
+      } else {
+        setRemoveError("Failed to remove root");
+      }
+    } finally {
+      setRemovingPath(null);
     }
   }
 
@@ -133,7 +173,57 @@ export function ProjectPicker({
           <button type="button" onClick={() => setBrowseOpen(false)}>
             Cancel
           </button>
-          {browseError && <p className="error-text" role="alert">{browseError}</p>}
+
+          {/* CR-CORE-08: roots added via Browse this session, each removable. See the addedRoots
+              comment above for why this isn't a fetched "all persisted roots" list. */}
+          {addedRoots.length > 0 && (
+            <div className="added-roots">
+              <div className="hint">Added roots:</div>
+              <ul className="added-roots-list">
+                {addedRoots.map((r) => (
+                  <li key={r.path} className="added-roots-item">
+                    <span className="added-roots-path" title={r.path}>
+                      {r.path}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveRoot(r.path)}
+                      disabled={removingPath === r.path}
+                      aria-label={`Remove ${r.path}`}
+                    >
+                      {removingPath === r.path ? "Removing…" : "Remove"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {removeError && (
+                <p className="error-text" role="alert">
+                  {removeError}
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* CR-UI-38: error rendered as a dismissable overlay modal, not inline in `.browse-panel` —
+          keeps the panel's own layout (input/Scan/Cancel) fixed regardless of error message length. */}
+      {browseError && (
+        <div className="error-backdrop" role="presentation" onClick={dismissBrowseError}>
+          <div
+            className="modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Browse error"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <p className="error-text" role="alert">
+              {browseError}
+            </p>
+            <button type="button" onClick={dismissBrowseError} autoFocus>
+              Dismiss
+            </button>
+          </div>
         </div>
       )}
     </div>

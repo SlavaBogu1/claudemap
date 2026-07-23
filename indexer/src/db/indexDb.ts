@@ -223,6 +223,42 @@ export function deleteMemoryFile(db: IndexDb, filePath: string): void {
   db.prepare(`DELETE FROM memory_files WHERE file_path = ?`).run(filePath);
 }
 
+/**
+ * (CR-CORE-08) Deletes every project row (and all of its child rows — sessions and their own
+ * children, memory files) whose `root` column exactly matches `root`. Used when a custom scan root
+ * is removed via `DELETE /api/projects/browse`: unlike CR-CORE-04's per-file pruning (which only
+ * ever prunes sessions/memory-files *within* a root that's still being actively scanned), a root
+ * that's no longer scanned at all would otherwise leave its project rows in `index.db` forever —
+ * this is the direct fix for that gap, and is why `root` is matched as a plain string rather than
+ * re-resolved via `resolveProjectsRoot` (a root being removed specifically because it no longer
+ * resolves is the exact case this must still handle). No-op if no project has that exact root.
+ * **Never touches `annotations.db`** (D16).
+ */
+export function deleteProjectsByRoot(db: IndexDb, root: string): void {
+  const projectIds = (
+    db.prepare(`SELECT id FROM projects WHERE root = ?`).all(root) as { id: string }[]
+  ).map((r) => r.id);
+  if (projectIds.length === 0) return;
+
+  const del = db.transaction((ids: string[]) => {
+    for (const projectId of ids) {
+      const sessionIds = (
+        db.prepare(`SELECT id FROM sessions WHERE project_id = ?`).all(projectId) as { id: string }[]
+      ).map((r) => r.id);
+      for (const sessionId of sessionIds) {
+        db.prepare(`DELETE FROM subagents WHERE session_id = ?`).run(sessionId);
+        db.prepare(`DELETE FROM tool_result_overflows WHERE session_id = ?`).run(sessionId);
+        db.prepare(`DELETE FROM session_memory_touches WHERE session_id = ?`).run(sessionId);
+        db.prepare(`DELETE FROM file_history_entries WHERE session_id = ?`).run(sessionId);
+      }
+      db.prepare(`DELETE FROM sessions WHERE project_id = ?`).run(projectId);
+      db.prepare(`DELETE FROM memory_files WHERE project_id = ?`).run(projectId);
+      db.prepare(`DELETE FROM projects WHERE id = ?`).run(projectId);
+    }
+  });
+  del(projectIds);
+}
+
 export interface UpsertSessionInput {
   id: string;
   projectId: string;

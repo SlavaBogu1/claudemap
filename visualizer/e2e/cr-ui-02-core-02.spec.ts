@@ -117,3 +117,85 @@ test.describe("CR-CORE-02 — Browse… custom scan root", () => {
     await expect(page.getByRole("alert")).toHaveText("not a valid Claude project directory");
   });
 });
+
+test.describe("CR-UI-38 — Browse error modal doesn't break panel layout", () => {
+  test("an invalid path shows the error in a modal overlay (not inline), leaving the input/Scan/Cancel controls in place; dismissing it allows scanning a different, valid path", async ({
+    page,
+  }) => {
+    const scanned = makeProject({ id: "exported", path: "D:\\exported\\.claude\\projects\\foo", sessionCount: 2 });
+    await mockApi(page, {
+      projects: [],
+      sessionsByProjectId: {},
+      browseResponse: { status: 400, body: { error: "No valid Claude Code session data found" } },
+    });
+
+    await page.goto("/");
+    await page.getByLabel("Project", { exact: true }).selectOption("__browse__");
+
+    const pathInput = page.getByLabel(/path/i);
+    await pathInput.fill("C:\\not\\a\\real\\path");
+    await page.getByRole("button", { name: "Scan" }).click();
+
+    // Error renders in an overlay dialog, distinct from the browse panel dialog.
+    const alert = page.getByRole("alert");
+    await expect(alert).toHaveText("No valid Claude Code session data found");
+    await expect(alert.locator("xpath=ancestor::*[contains(@class,'modal')]")).toHaveCount(1);
+
+    // The panel's own controls remain visible/usable while the error modal is shown.
+    await expect(pathInput).toBeVisible();
+    await expect(page.getByRole("button", { name: "Scan" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancel" })).toBeVisible();
+
+    await page.getByRole("button", { name: /dismiss/i }).click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
+
+    // A subsequent, valid scan still works after dismissing the error (no page reload required).
+    await page.route(`http://127.0.0.1:4317/api/projects/browse`, (route) => {
+      if (route.request().method() === "DELETE") return route.continue();
+      route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify([scanned]) });
+    });
+    await pathInput.fill("D:\\exported\\.claude");
+    await page.getByRole("button", { name: "Scan" }).click();
+    await expect(page.getByLabel("Project", { exact: true }).locator("option", { hasText: "foo" })).toHaveCount(1);
+  });
+});
+
+test.describe("CR-CORE-08 — remove a persisted custom scan root", () => {
+  test("an added root shows a Remove button; clicking it calls DELETE and removes the root from the list without a page reload", async ({
+    page,
+  }) => {
+    const scanned = makeProject({ id: "exported", path: "D:\\exported\\.claude\\projects\\foo", sessionCount: 2 });
+    const handle = await mockApi(page, {
+      projects: [],
+      sessionsByProjectId: {},
+      browseResponse: { status: 200, body: [scanned] },
+    });
+
+    await page.goto("/");
+    await page.getByLabel("Project", { exact: true }).selectOption("__browse__");
+    await page.getByLabel(/path/i).fill("D:\\exported\\.claude");
+    await page.getByRole("button", { name: "Scan" }).click();
+
+    // Scanning closes the panel on success; reopen to see the added-roots list.
+    await expect(page.getByLabel(/path/i)).toHaveCount(0);
+    await page.getByLabel("Project", { exact: true }).selectOption("__browse__");
+
+    await expect(page.getByText("D:\\exported\\.claude")).toBeVisible();
+    const removeButton = page.getByRole("button", { name: /remove d:\\exported\\\.claude/i });
+    await expect(removeButton).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as { __navCount: number }).__navCount = 0;
+      window.addEventListener("beforeunload", () => {
+        (window as unknown as { __navCount: number }).__navCount++;
+      });
+    });
+
+    await removeButton.click();
+    await expect(page.getByText("D:\\exported\\.claude")).toHaveCount(0);
+
+    expect(handle.browseRemoveCalls).toEqual(["D:\\exported\\.claude"]);
+    const navCount = await page.evaluate(() => (window as unknown as { __navCount: number }).__navCount);
+    expect(navCount).toBe(0);
+  });
+});

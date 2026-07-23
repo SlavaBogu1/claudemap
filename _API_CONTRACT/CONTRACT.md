@@ -1,6 +1,6 @@
 # Indexer ↔ Visualizer API Contract
 
-**Owner:** Indexer team. **Version:** v1.12.
+**Owner:** Indexer team. **Version:** v1.13.
 Golden copy — the Visualizer reads this file directly; never copy it into `visualizer/`.
 Change workflow: `REQUIREMENTS/PRODUCT_OWNER_PROCESS.md` § Contract Change Workflow.
 
@@ -393,6 +393,24 @@ itself a projects-root directory (immediate subdirectories are project folders c
 On success, the path is persisted to `annotations.db` (durable user data, D16) and is included in
 every subsequent `GET /api/projects` call, surviving restarts.
 
+### `DELETE /api/projects/browse` (v1.13, CR-CORE-08)
+Removes a persisted custom scan root previously added via `POST /api/projects/browse`. Intended for
+a root that has stopped resolving (moved/deleted/unmounted drive) and would otherwise persist
+forever, re-logging a `WARN` on every rescan (`resolveAllKnownRoots`) with no way to clear it.
+
+**Request body:** `{ "path": "D:\\Exported\\.claude" }` — the exact path string originally passed to
+`POST /api/projects/browse` (not required to still resolve to real session data; that's the case
+this endpoint exists to clean up).
+
+**Response 200:** `{ "ok": true }` — returned whether or not `path` was actually persisted; removing
+a path that was never added (or already removed) is a clean no-op, not an error.
+
+**Response 400** (missing/empty `path`): `{ "error": "Request body must include a non-empty string 'path'." }`
+
+On success, the row is deleted from `annotations.db` and a rescan of the remaining known roots is
+triggered immediately, so the removed root's projects/sessions no longer appear in the very next
+`GET /api/projects` call.
+
 ## CORS Policy (v1.2, CR-API-02 hotfix)
 The API sends `Access-Control-Allow-*` headers via an **explicit origin allowlist** — never a
 wildcard `*`. Currently allowed origins (`indexer/src/config.ts` `ALLOWED_ORIGINS`):
@@ -416,6 +434,8 @@ future packaged desktop shell), add that origin to `ALLOWED_ORIGINS` in `indexer
 it's a plain array, no other code changes needed.
 
 ## Changelog
+- **v1.13** (2026-07-22, Sprint 9, `CR-CORE-08`) — Added `DELETE /api/projects/browse` to remove a
+  persisted custom scan root (see above). No changes to any existing endpoint/schema.
 - **v1.12** (2026-07-04, Sprint 8, `CR-CORE-05` re-validation fix) — Changed
   `GET /api/projects/:id/file-content`'s `path` query param from a full filesystem path to the
   relative two-segment identifier `{sessionId}/{backupFileName}`. Root cause: the Visualizer had no

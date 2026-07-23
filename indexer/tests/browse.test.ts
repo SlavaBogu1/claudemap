@@ -75,6 +75,102 @@ describe("Custom scan root — POST /api/projects/browse (CR-CORE-02)", () => {
   });
 });
 
+describe("Custom scan root removal — DELETE /api/projects/browse (CR-CORE-08)", () => {
+  let fixture: Fixture;
+  let indexDb: IndexDb;
+  let annotationsDb: AnnotationsDb;
+  let app: Express;
+
+  beforeEach(() => {
+    fixture = buildFixture();
+    indexDb = openIndexDb(":memory:");
+    annotationsDb = openAnnotationsDb(":memory:");
+    app = createApp({
+      indexDb,
+      annotationsDb,
+      defaultProjectsRoot: NONEXISTENT_DEFAULT_ROOT,
+      desktopSessionsRoot: fixture.desktopSessionsRoot,
+      logger: { warn: () => {}, info: () => {} }
+    });
+  });
+
+  afterEach(() => {
+    indexDb.close();
+    annotationsDb.close();
+    cleanupFixture(fixture);
+  });
+
+  it("removes a previously-added root: it no longer appears in GET /api/projects and is no longer scanned", async () => {
+    const addRes = await request(app).post("/api/projects/browse").send({ path: fixture.tmpRoot });
+    expect(addRes.status).toBe(200);
+
+    const listAfterAdd = await request(app).get("/api/projects");
+    expect(listAfterAdd.body.some((p: any) => p.id === fixture.projectDirName)).toBe(true);
+
+    const deleteRes = await request(app).delete("/api/projects/browse").send({ path: fixture.tmpRoot });
+    expect(deleteRes.status).toBe(200);
+    expect(deleteRes.body).toEqual({ ok: true });
+
+    const listAfterDelete = await request(app).get("/api/projects");
+    expect(listAfterDelete.status).toBe(200);
+    expect(listAfterDelete.body.some((p: any) => p.id === fixture.projectDirName)).toBe(false);
+  });
+
+  it("removing a non-existent/never-added path returns a clean 200, not a crash", async () => {
+    const res = await request(app)
+      .delete("/api/projects/browse")
+      .send({ path: path.join(os.tmpdir(), "never-added-" + Date.now()) });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ ok: true });
+  });
+
+  it("a missing/invalid body.path returns a clean 400, not a crash", async () => {
+    const res = await request(app).delete("/api/projects/browse").send({});
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("removing one of several roots leaves the remaining roots scanned normally", async () => {
+    // A second, independent root with its own uniquely-named project — deliberately not another
+    // buildFixture() (which always uses the same fixed project dir name, so two of them scanned
+    // together would collide on the projects table's `id` primary key and overwrite each other's
+    // `root`, masking the very behavior this test checks).
+    const otherRoot = fs.mkdtempSync(path.join(os.tmpdir(), "indexer-other-root-"));
+    const otherProjectDirName = "D--Other--ProjectTwo";
+    const otherProjectDirPath = path.join(otherRoot, otherProjectDirName);
+    fs.mkdirSync(otherProjectDirPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(otherProjectDirPath, "session-other.jsonl"),
+      JSON.stringify({
+        type: "user",
+        uuid: "other-u1",
+        parentUuid: null,
+        sessionId: "session-other",
+        cwd: "D:\\Other\\ProjectTwo",
+        gitBranch: "main",
+        timestamp: "2026-06-01T00:00:00.000Z",
+        message: { role: "user", content: "Hello from the other root." }
+      }) + "\n"
+    );
+
+    try {
+      const addRes1 = await request(app).post("/api/projects/browse").send({ path: fixture.tmpRoot });
+      expect(addRes1.status).toBe(200);
+      const addRes2 = await request(app).post("/api/projects/browse").send({ path: otherRoot });
+      expect(addRes2.status).toBe(200);
+
+      const deleteRes = await request(app).delete("/api/projects/browse").send({ path: fixture.tmpRoot });
+      expect(deleteRes.status).toBe(200);
+
+      const listRes = await request(app).get("/api/projects");
+      expect(listRes.body.some((p: any) => p.id === fixture.projectDirName)).toBe(false);
+      expect(listRes.body.some((p: any) => p.id === otherProjectDirName)).toBe(true);
+    } finally {
+      fs.rmSync(otherRoot, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Custom scan root persistence across a restart (CR-CORE-02 AC3)", () => {
   let fixture: Fixture;
   let dbDir: string;

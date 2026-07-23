@@ -931,10 +931,20 @@ export function GraphCanvas({
 
   const elements: ElementDefinition[] = useMemo(() => {
     const children: ElementDefinition[] = [];
+    // Only add child elements for sessions that are currently visible (in baseElements).
+    // This prevents orphaned tool/subagent/memory nodes when a parent session is filtered out
+    // (e.g., by time range change).
+    const visibleSessionIds = new Set(
+      baseElements
+        .filter((el) => el.data?.type === "session")
+        .map((el) => el.data?.id),
+    );
     for (const [sessionId, types] of expandedTypes) {
-      const detail = sessionDetails.get(sessionId);
-      if (detail && types.size > 0) {
-        children.push(...buildChildElements(sessionId, detail, types));
+      if (visibleSessionIds.has(sessionId)) {
+        const detail = sessionDetails.get(sessionId);
+        if (detail && types.size > 0) {
+          children.push(...buildChildElements(sessionId, detail, types));
+        }
       }
     }
     return [...baseElements, ...children];
