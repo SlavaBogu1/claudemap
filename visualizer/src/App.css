@@ -487,6 +487,26 @@
   white-space: pre-wrap;
 }
 
+/* CR-UI-37: each stick-it note line is a click-to-jump link into the content view above — reuses
+   CR-UI-17's search/highlight state, so it must read as clickable (link color + underline +
+   pointer) in both Light and Dark themes; `--accent` already carries that contrast (see
+   index.css's `:root`/`.dark`/prefers-color-scheme blocks). */
+.stick-it-note-line {
+  margin: 0 0 4px;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.stick-it-note-line:last-child {
+  margin-bottom: 0;
+}
+
+.stick-it-note-line:hover,
+.stick-it-note-line:focus-visible {
+  text-decoration: none;
+}
+
 .note-editor {
   margin-top: 16px;
 }

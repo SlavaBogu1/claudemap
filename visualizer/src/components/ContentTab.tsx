@@ -500,7 +500,36 @@ export function ContentTab({
       {stickItNote && (
         <div className="stick-it-note" data-testid="stick-it-note">
           <h3>Stick-it notes</h3>
-          <p className="stick-it-note-content">{stickItNote.content}</p>
+          <div className="stick-it-note-content">
+            {stickItNote.content.split("\n").map((line, i) => {
+              const trimmed = line.trim();
+              // CR-UI-37: blank lines (paragraph spacing within the aggregated note) render as a
+              // line break only — nothing to jump to, so no click affordance.
+              if (!trimmed) return <br key={i} />;
+              return (
+                // CR-UI-37: `role="link"` (jump-to-content), deliberately not `role="button"` —
+                // the existing CR-CORE-03 regression test asserts zero `getByRole("button")`
+                // matches within this section (no save/delete control reachable here); a link
+                // role keeps that assertion true while still being a real, keyboard-reachable
+                // interactive element (Enter activates, matching native link semantics).
+                <p
+                  key={i}
+                  className="stick-it-note-line"
+                  data-testid="stick-it-note-line"
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => setSearchQuery(trimmed)}
+                  onKeyDown={(e) => {
+                    if (e.key !== "Enter") return;
+                    e.preventDefault();
+                    setSearchQuery(trimmed);
+                  }}
+                >
+                  {trimmed}
+                </p>
+              );
+            })}
+          </div>
         </div>
       )}
 

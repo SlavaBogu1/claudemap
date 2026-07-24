@@ -179,4 +179,59 @@ test.describe("CR-CORE-03 — stick-it notes (badge + view-only content)", () =>
     // The stick-it section keeps rendering its own separate content, untouched by the user save.
     await expect(page.getByTestId("stick-it-note")).toContainText("tagged moment");
   });
+
+  // CR-UI-37 (Sprint 10): each stick-it note line is a clickable link into the content view above,
+  // reusing CR-UI-17's existing search/highlight state — no new search mechanism.
+  test("clicking a stick-it note line jumps to and highlights that text in the session content", async ({
+    page,
+  }) => {
+    const project = makeProject({ id: "sudoku", sessionCount: 1 });
+    const sessions = makeSessions(1);
+    const target = sessions[0];
+
+    await mockApi(page, {
+      projects: [project],
+      sessionsByProjectId: { sudoku: sessions },
+      sessionContentByKey: {
+        [`sudoku/${target.id}`]: {
+          messages: [
+            { role: "user", text: "Let's refactor the auth module.", timestamp: "2026-06-02T09:00:00Z" },
+            { role: "assistant", text: "Sure — refactor auth now.", timestamp: "2026-06-02T09:01:00Z" },
+          ],
+        },
+      },
+      stickItNotes: [
+        {
+          projectId: "sudoku",
+          nodeType: "session",
+          nodeId: target.id,
+          content: "refactor the auth module\n\nsomething that no longer exists",
+          createdAt: "2026-07-03T12:00:00Z",
+          updatedAt: "2026-07-03T12:05:00Z",
+        },
+      ],
+    });
+
+    await page.goto("/");
+    await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
+    await openContentTabFor(page, target.id);
+
+    const lines = page.getByTestId("stick-it-note-line");
+    await expect(lines).toHaveCount(2);
+
+    // Clicking the first line sets the search box to that exact line text and highlights the
+    // (single) match in the transcript above.
+    await lines.first().click();
+    await expect(page.getByLabel("Search content")).toHaveValue("refactor the auth module");
+    await expect(page.getByTestId("content-search-count")).toHaveText("1 of 1");
+    await expect(page.getByTestId("search-match-current")).toHaveText("refactor the auth module");
+    await expect(page.getByTestId("search-match-current")).toBeVisible();
+
+    // Edge case: a note line whose text no longer appears in the (possibly re-parsed) content
+    // shows "0 matches" — no crash, no highlight.
+    await lines.nth(1).click();
+    await expect(page.getByLabel("Search content")).toHaveValue("something that no longer exists");
+    await expect(page.getByTestId("content-search-count")).toHaveText("0 matches");
+    await expect(page.locator('[data-testid^="search-match"]')).toHaveCount(0);
+  });
 });
