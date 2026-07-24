@@ -366,6 +366,22 @@
   background: rgba(128, 128, 128, 0.15);
 }
 
+/* Regression fix (2026-07-24): this rule was accidentally deleted during CR-UI-38's cleanup of a
+   duplicate `.modal-overlay`/`.modal` pair — the browse-error overlay's own copy was renamed to
+   `.error-backdrop` (see above), but this second copy, used by Preferences/About/Documentation/Help
+   (all four render `<div className="modal-overlay"><div className="modal">`), was deleted outright
+   instead of also being renamed, leaving those four panels with no overlay positioning at all
+   (rendered in-flow, pushing/shifting the header layout instead of floating on top). Restored here. */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
 .modal {
   background: var(--bg);
   border-radius: 8px;
