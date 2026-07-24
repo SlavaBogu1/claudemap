@@ -100,7 +100,13 @@ export function createProjectsRouter(options: ProjectsRouterOptions): Router {
    * `stick_it_notes` row (CR-CORE-03) alongside the existing index.db bookkeeping.
    */
   function doRescan(projectsRoots: string[] = resolveAllKnownRoots(options)): void {
-    rescan({ db: indexDb, projectsRoots, annotationsDb: options.annotationsDb, logger });
+    rescan({
+      db: indexDb,
+      projectsRoots,
+      annotationsDb: options.annotationsDb,
+      fileHistoryRoot: options.fileHistoryRoot,
+      logger
+    });
     // (v1.11, CR-CORE-06) A separate data source/tree from Code's projectsRoots above — always
     // rescanned in full (no persisted-root variant like Code's browse feature), same on-demand
     // incremental-by-mtime posture (D13). A missing root (no Claude Desktop on this machine, or a

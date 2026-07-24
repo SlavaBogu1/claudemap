@@ -201,6 +201,110 @@ export function deleteSession(db: IndexDb, sessionId: string): void {
 }
 
 /**
+ * (CR-CORE-11) Every currently-indexed subagent row's own `session_id` + `file_path` for a project's
+ * sessions — the "known before this rescan" side of the orphan-check against each row's backing file
+ * on disk. Mirrors `listSessionIdsForProject`'s pattern but at the sub-item level: this pass must run
+ * on every rescan regardless of whether the parent session itself was re-parsed this round (a sibling
+ * file can vanish without the parent `.jsonl`'s mtime changing).
+ */
+export function listSubagentFileRefsForProject(
+  db: IndexDb,
+  projectId: string
+): { sessionId: string; agentId: string; filePath: string | null }[] {
+  return db
+    .prepare(
+      `SELECT sub.session_id AS sessionId, sub.agent_id AS agentId, sub.file_path AS filePath
+       FROM subagents sub
+       JOIN sessions s ON s.id = sub.session_id
+       WHERE s.project_id = ?`
+    )
+    .all(projectId) as { sessionId: string; agentId: string; filePath: string | null }[];
+}
+
+/** (CR-CORE-11) Deletes one orphaned `subagents` row. Never touches `annotations.db` (D16). */
+export function deleteSubagent(db: IndexDb, sessionId: string, agentId: string): void {
+  db.prepare(`DELETE FROM subagents WHERE session_id = ? AND agent_id = ?`).run(sessionId, agentId);
+}
+
+/**
+ * (CR-CORE-11) Every currently-indexed tool-result-overflow row's `rowid` + `session_id` + `file_path`
+ * for a project's sessions, for the same per-rescan orphan-check as `listSubagentFileRefsForProject`.
+ * `tool_result_overflows` has no natural composite key (no `PRIMARY KEY`, unlike `subagents`), so the
+ * implicit SQLite `rowid` is used to target the exact row for deletion.
+ */
+export function listOverflowFileRefsForProject(
+  db: IndexDb,
+  projectId: string
+): { rowid: number; sessionId: string; filePath: string }[] {
+  return db
+    .prepare(
+      `SELECT tro.rowid AS rowid, tro.session_id AS sessionId, tro.file_path AS filePath
+       FROM tool_result_overflows tro
+       JOIN sessions s ON s.id = tro.session_id
+       WHERE s.project_id = ?`
+    )
+    .all(projectId) as { rowid: number; sessionId: string; filePath: string }[];
+}
+
+/** (CR-CORE-11) Deletes one orphaned `tool_result_overflows` row by `rowid`. Never touches `annotations.db`. */
+export function deleteOverflow(db: IndexDb, rowid: number): void {
+  db.prepare(`DELETE FROM tool_result_overflows WHERE rowid = ?`).run(rowid);
+}
+
+/**
+ * (CR-CORE-11) Every currently-indexed `session_memory_touches` row's `rowid` + `session_id` +
+ * `file_path` for a project's sessions, for the same per-rescan orphan-check. Deliberately independent
+ * of `memory_files` (a touch can point at a memory file that was never indexed, or one whose own
+ * `memory_files` row was separately pruned by `deleteMemoryFile` — see that function's comment); this
+ * checks the touch's own backing file directly.
+ */
+export function listMemoryTouchFileRefsForProject(
+  db: IndexDb,
+  projectId: string
+): { rowid: number; sessionId: string; filePath: string }[] {
+  return db
+    .prepare(
+      `SELECT smt.rowid AS rowid, smt.session_id AS sessionId, smt.file_path AS filePath
+       FROM session_memory_touches smt
+       JOIN sessions s ON s.id = smt.session_id
+       WHERE s.project_id = ?`
+    )
+    .all(projectId) as { rowid: number; sessionId: string; filePath: string }[];
+}
+
+/** (CR-CORE-11) Deletes one orphaned `session_memory_touches` row by `rowid`. Never touches `annotations.db`. */
+export function deleteMemoryTouch(db: IndexDb, rowid: number): void {
+  db.prepare(`DELETE FROM session_memory_touches WHERE rowid = ?`).run(rowid);
+}
+
+/**
+ * (CR-CORE-11) Every currently-indexed `file_history_entries` row's `rowid` + `session_id` +
+ * `backup_file_name` for a project's sessions, for the same per-rescan orphan-check. Unlike the other
+ * three sub-item types, the row's own `file_path` is the *original tracked source file* (e.g.
+ * `backend\tests\test_auth.py`), not the backup's location — existence must be checked against
+ * `{fileHistoryRoot}/{sessionId}/{backupFileName}` instead (mirrors `fileHistoryBackupExists`'s and
+ * the `.../file-content` route's own path construction).
+ */
+export function listFileHistoryRefsForProject(
+  db: IndexDb,
+  projectId: string
+): { rowid: number; sessionId: string; backupFileName: string }[] {
+  return db
+    .prepare(
+      `SELECT fh.rowid AS rowid, fh.session_id AS sessionId, fh.backup_file_name AS backupFileName
+       FROM file_history_entries fh
+       JOIN sessions s ON s.id = fh.session_id
+       WHERE s.project_id = ?`
+    )
+    .all(projectId) as { rowid: number; sessionId: string; backupFileName: string }[];
+}
+
+/** (CR-CORE-11) Deletes one orphaned `file_history_entries` row by `rowid`. Never touches `annotations.db`. */
+export function deleteFileHistoryEntry(db: IndexDb, rowid: number): void {
+  db.prepare(`DELETE FROM file_history_entries WHERE rowid = ?`).run(rowid);
+}
+
+/**
  * (CR-CORE-04) Every currently-indexed memory file path for a project — the "known before this
  * rescan" side of the diff against the on-disk `memory/*.md` listing, used to detect memory files
  * whose file has since been deleted so their stale index.db row can be pruned.

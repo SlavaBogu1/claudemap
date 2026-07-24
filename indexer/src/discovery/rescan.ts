@@ -2,12 +2,20 @@ import fs from "node:fs";
 import path from "node:path";
 import type { IndexDb } from "../db/indexDb.js";
 import {
+  deleteFileHistoryEntry,
   deleteMemoryFile,
+  deleteMemoryTouch,
+  deleteOverflow,
   deleteSession,
+  deleteSubagent,
   getMemoryFileMtime,
   getSessionMtime,
+  listFileHistoryRefsForProject,
   listMemoryFilePathsForProject,
+  listMemoryTouchFileRefsForProject,
+  listOverflowFileRefsForProject,
   listSessionIdsForProject,
+  listSubagentFileRefsForProject,
   replaceFileHistoryEntries,
   replaceMemoryTouches,
   replaceOverflows,
@@ -23,6 +31,7 @@ import { parseSessionFile } from "../parsing/sessionParser.js";
 import { parseSubagentMeta } from "../parsing/subagentParser.js";
 import { parseMemoryFile } from "../parsing/memoryParser.js";
 import { consoleLogger, type Logger } from "../logger.js";
+import { defaultFileHistoryRoot } from "../config.js";
 
 export interface RescanOptions {
   db: IndexDb;
@@ -35,6 +44,13 @@ export interface RescanOptions {
    * are never conflated) aren't forced to open annotations.db just to call rescan().
    */
   annotationsDb?: AnnotationsDb;
+  /**
+   * (CR-CORE-11) `{CLAUDE_HOME}/file-history` root, used only to check whether a `file_history_entries`
+   * row's backup still exists on disk (`{fileHistoryRoot}/{sessionId}/{backupFileName}`). Optional,
+   * defaults to `defaultFileHistoryRoot()` — mirrors `annotationsDb`'s optionality so existing
+   * index.db-only callers/tests aren't forced to pass it.
+   */
+  fileHistoryRoot?: string;
   logger?: Logger;
   /** Injectable clock, defaults to Date.now — lets tests assert incremental behavior deterministically. */
   now?: () => number;
@@ -49,6 +65,14 @@ export interface RescanStats {
   sessionsDeleted: number;
   /** (CR-CORE-04) Previously-indexed memory files pruned this rescan because their `.md` file is gone. */
   memoryFilesDeleted: number;
+  /** (CR-CORE-11) Previously-indexed subagent rows pruned because their backing file is gone. */
+  subagentsDeleted: number;
+  /** (CR-CORE-11) Previously-indexed tool-result-overflow rows pruned because their backing file is gone. */
+  overflowsDeleted: number;
+  /** (CR-CORE-11) Previously-indexed session-memory-touch rows pruned because their backing file is gone. */
+  memoryTouchesDeleted: number;
+  /** (CR-CORE-11) Previously-indexed file-history-entry rows pruned because their backup file is gone. */
+  fileHistoryEntriesDeleted: number;
 }
 
 /**
@@ -60,6 +84,7 @@ export function rescan(options: RescanOptions): RescanStats {
   const { db, projectsRoots, annotationsDb } = options;
   const logger = options.logger ?? consoleLogger;
   const now = options.now ?? Date.now;
+  const fileHistoryRoot = options.fileHistoryRoot ?? defaultFileHistoryRoot();
 
   const stats: RescanStats = {
     projectsScanned: 0,
@@ -67,7 +92,11 @@ export function rescan(options: RescanOptions): RescanStats {
     sessionsSkipped: 0,
     memoryFilesParsed: 0,
     sessionsDeleted: 0,
-    memoryFilesDeleted: 0
+    memoryFilesDeleted: 0,
+    subagentsDeleted: 0,
+    overflowsDeleted: 0,
+    memoryTouchesDeleted: 0,
+    fileHistoryEntriesDeleted: 0
   };
 
   for (const root of projectsRoots) {
@@ -89,10 +118,65 @@ export function rescan(options: RescanOptions): RescanStats {
 
       rescanProjectSessions(db, annotationsDb, projectId, projectDirPath, logger, now, stats);
       rescanProjectMemory(db, projectId, projectDirPath, logger, now, stats);
+      pruneOrphanedSessionChildren(db, projectId, fileHistoryRoot, stats);
     }
   }
 
   return stats;
+}
+
+/**
+ * (CR-CORE-11) Prunes `subagents` / `tool_result_overflows` / `session_memory_touches` /
+ * `file_history_entries` rows whose backing file on disk no longer exists — the same "sessions
+ * still returned after their backing file vanished" bug `CR-CORE-04` fixed for whole sessions and
+ * memory files, extended to these four sub-item tables.
+ *
+ * **Deliberately runs unconditionally on every rescan, for every session still on disk** — not just
+ * ones re-parsed this round. D13's incremental mtime-skip (`rescanProjectSessions`'s
+ * `previousMtime === mtimeMs` check) only tells us the parent `.jsonl` itself is unchanged; it says
+ * nothing about a *sibling* file (a subagent transcript, an overflow dump, a file-history backup)
+ * being deleted independently. If this pruning only ran inside the "session changed, re-parsing"
+ * branch, an orphan under an otherwise-untouched session would never be caught, because the parent
+ * session's own mtime never changes just because a sibling file vanished. Cheap: one `fs.existsSync`
+ * per already-indexed row, not a directory walk — called once per project, after both the session and
+ * memory rescans above (so it reflects any `deleteSession` pruning that already ran this rescan).
+ *
+ * Only ever deletes index.db rows — `annotations.db` (notes, stick-it notes) is never touched (D16).
+ */
+function pruneOrphanedSessionChildren(
+  db: IndexDb,
+  projectId: string,
+  fileHistoryRoot: string,
+  stats: RescanStats
+): void {
+  for (const ref of listSubagentFileRefsForProject(db, projectId)) {
+    if (!ref.filePath || !fs.existsSync(ref.filePath)) {
+      deleteSubagent(db, ref.sessionId, ref.agentId);
+      stats.subagentsDeleted++;
+    }
+  }
+
+  for (const ref of listOverflowFileRefsForProject(db, projectId)) {
+    if (!fs.existsSync(ref.filePath)) {
+      deleteOverflow(db, ref.rowid);
+      stats.overflowsDeleted++;
+    }
+  }
+
+  for (const ref of listMemoryTouchFileRefsForProject(db, projectId)) {
+    if (!fs.existsSync(ref.filePath)) {
+      deleteMemoryTouch(db, ref.rowid);
+      stats.memoryTouchesDeleted++;
+    }
+  }
+
+  for (const ref of listFileHistoryRefsForProject(db, projectId)) {
+    const backupPath = path.join(fileHistoryRoot, ref.sessionId, ref.backupFileName);
+    if (!fs.existsSync(backupPath)) {
+      deleteFileHistoryEntry(db, ref.rowid);
+      stats.fileHistoryEntriesDeleted++;
+    }
+  }
 }
 
 function rescanProjectSessions(

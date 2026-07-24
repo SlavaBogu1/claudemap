@@ -22,6 +22,11 @@ describe("HTTP API (CR-API-01)", () => {
       indexDb,
       annotationsDb,
       defaultProjectsRoot: fixture.projectsRoot,
+      // (CR-CORE-11) Must match the fixture's real file-history backup location — otherwise every
+      // rescan's orphan-pruning pass (which checks each file_history_entries row against
+      // {fileHistoryRoot}/{sessionId}/{backupFileName}) would find nothing there and prune rows that
+      // are, in fact, still on disk.
+      fileHistoryRoot: fixture.fileHistoryRoot,
       desktopSessionsRoot: fixture.desktopSessionsRoot,
       openFolder: openFolderMock,
       logger: { warn: () => {}, info: () => {} }

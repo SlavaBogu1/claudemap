@@ -106,13 +106,14 @@ describe("deleted-session / deleted-memory-file pruning (CR-CORE-04)", () => {
     fs.rmSync(fixture.memoryTopic1Path);
     rescan({ db, projectsRoots: [fixture.projectsRoot], annotationsDb });
 
-    // session-bbb's touched_memory flag and its session_memory_touches row are untouched by memory-
-    // file pruning (owned by the session, not the memory_files row) — the session still reports it
-    // touched memory, but the dangling touch now resolves to no known memory file.
+    // session-bbb's touched_memory flag (set at parse time, untouched by any pruning pass) still
+    // reports the session touched memory. Its session_memory_touches row itself, however, is now
+    // pruned by CR-CORE-11's orphan-check (the touch's own backing file is gone) — superseding the
+    // pre-CR-CORE-11 expectation that the dangling touch row would survive.
     const sessions = listSessions(db, fixture.projectDirName);
     const bbb = sessions.find((s) => s.id === "session-bbb")!;
     expect(bbb.touchedMemory).toBe(true);
-    expect(bbb.memoryTouchCount).toBe(1);
+    expect(bbb.memoryTouchCount).toBe(0);
     expect(memoryFileExists(db, fixture.projectDirName, fixture.memoryTopic1Path)).toBe(false);
   });
 

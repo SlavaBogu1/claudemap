@@ -207,12 +207,20 @@ describe("GET /api/projects/:id/file-content (CR-CORE-05)", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("returns a clean 404 when the backup is indexed but its file has since been removed from disk", async () => {
+  // (CR-CORE-11) Before CR-CORE-11, this endpoint's own doRescan() left a since-deleted backup's row
+  // indexed, so the security check passed and the fs.readFileSync failure below produced a 404
+  // ("file no longer exists"). Now every rescan (including this route's own, run at the top of every
+  // request) prunes exactly that orphaned row first — so by the time the security check runs, the
+  // backup is no longer "known, indexed" at all, and the route correctly falls into the same 400
+  // "not a known file-history backup" branch as any other unindexed path. The endpoint's own
+  // defense-in-depth (the try/catch below) is unchanged and still fires for any race outside a
+  // rescan's visibility (e.g. deleted between the security check and the read).
+  it("returns a clean 400 (no longer indexed) when the backup file has since been removed from disk — CR-CORE-11 prunes it before the read is attempted", async () => {
     fs.rmSync(fixture.fileHistoryAuthPyBackupPath);
     const res = await request(app)
       .get(`/api/projects/${fixture.projectDirName}/file-content`)
       .query({ path: `session-bbb/${fixture.fileHistoryAuthPyBackupName}` });
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(400);
     expect(res.body).toHaveProperty("error");
   });
 
