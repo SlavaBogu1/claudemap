@@ -7,6 +7,8 @@ import { SafeMarkdown } from "./SafeMarkdown";
 // can never silently drift out of sync with what notes actually render.
 
 export interface HelpPanelProps {
+  // CR-UI-41: no longer called by a visible button in this panel — kept so BurgerMenu's
+  // outside-click/burger-icon-click handlers still have a close path to invoke.
   onClose: () => void;
 }
 
@@ -28,10 +30,12 @@ const EXAMPLES: Example[] = [
   { label: "Inline code", source: "`const x = 1;`" },
 ];
 
-export function HelpPanel({ onClose }: HelpPanelProps) {
+export function HelpPanel({ onClose: _onClose }: HelpPanelProps) {
   return (
     <div className="modal-overlay" role="dialog" aria-label="Help">
-      <div className="modal">
+      {/* CR-UI-41: stops a click inside the panel from bubbling to BurgerMenu's document-level
+          outside-click listener, mirroring CR-UI-38's error-modal pattern in ProjectPicker.tsx. */}
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Note formatting help</h2>
         <p className="hint">
           Notes support Markdown. While editing, type the raw syntax below — when you switch back to
@@ -52,9 +56,6 @@ export function HelpPanel({ onClose }: HelpPanelProps) {
             </div>
           ))}
         </div>
-        <button type="button" onClick={onClose}>
-          Close
-        </button>
       </div>
     </div>
   );

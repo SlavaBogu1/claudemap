@@ -31,6 +31,8 @@ import {
   clampDetailPanelWidth,
   getShowBanners,
   setShowBanners,
+  getExpandOnDoubleClick,
+  setExpandOnDoubleClick,
   getPreferredTheme,
   setPreferredTheme,
   getPreferredSessionColorScheme,
@@ -63,6 +65,14 @@ function App() {
   const [timeRange, setTimeRangeState] = useState<TimeRangeName>(() => getPreferredTimeRange());
   // CR-UI-07 (D23): banner-row visibility — Preferences-only control (no header quick shortcut).
   const [showBanners, setShowBannersState] = useState<boolean>(() => getShowBanners());
+  // CR-UI-40: "Require double-click to expand/collapse" — Preferences-only control, default off.
+  const [expandOnDoubleClick, setExpandOnDoubleClickState] = useState<boolean>(() =>
+    getExpandOnDoubleClick(),
+  );
+  // CR-UI-39: a plain incrementing counter — GraphCanvas's `useEffect` watches this and clears
+  // `expandedTypes` to an empty Map whenever it changes. No panel involved, so no separate "closed"
+  // state to track like the burger-menu panels above.
+  const [collapseAllSignal, setCollapseAllSignal] = useState(0);
   // CR-UI-24 (D23): Light/Dark/System theme — Preferences-only control (no header quick shortcut).
   const [theme, setThemeState] = useState<ThemeName>(() => getPreferredTheme());
   // CR-UI-33 (D23): "Session color scheme" — Preferences-only control (no header quick shortcut).
@@ -219,6 +229,18 @@ function App() {
     setShowBannersState(next);
   }
 
+  function handleExpandOnDoubleClickChange(next: boolean) {
+    setExpandOnDoubleClick(next);
+    setExpandOnDoubleClickState(next);
+  }
+
+  // CR-UI-39: "Collapse All" — a direct action, identical wiring pattern to refreshProjectData
+  // below (called straight from BurgerMenu's onCollapseAll prop, no intermediate state to track
+  // besides the counter itself).
+  function handleCollapseAll() {
+    setCollapseAllSignal((c) => c + 1);
+  }
+
   function handleThemeChange(next: ThemeName) {
     setPreferredTheme(next);
     setThemeState(next);
@@ -371,7 +393,10 @@ function App() {
           onThemeChange={handleThemeChange}
           sessionColorScheme={sessionColorScheme}
           onSessionColorSchemeChange={handleSessionColorSchemeChange}
+          expandOnDoubleClick={expandOnDoubleClick}
+          onExpandOnDoubleClickChange={handleExpandOnDoubleClickChange}
           onRefresh={refreshProjectData}
+          onCollapseAll={handleCollapseAll}
         />
       </header>
 
@@ -393,6 +418,8 @@ function App() {
                 notedKeys={notedKeys}
                 theme={theme}
                 sessionColorScheme={sessionColorScheme}
+                collapseAllSignal={collapseAllSignal}
+                expandOnDoubleClick={expandOnDoubleClick}
               />
               {/* CR-UI-27: the project itself has real sessions, but none fall in the selected
                   time range — show a clear hint rather than a confusing, seemingly-empty canvas

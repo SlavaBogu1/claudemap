@@ -136,7 +136,8 @@ test("Timeline choice persists via Preferences and applies as the initial layout
   await page.getByRole("button", { name: "Menu" }).click();
   await page.getByRole("menuitem", { name: "Preferences" }).click();
   await page.getByLabel(/default graph layout/i).selectOption("timeline");
-  await page.getByRole("button", { name: "Close" }).click();
+  // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+  await page.getByRole("button", { name: "Menu" }).click();
 
   await page.reload();
   await expect(page.getByLabel("Layout")).toHaveValue("timeline");

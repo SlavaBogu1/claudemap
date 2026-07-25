@@ -21,6 +21,12 @@ export interface PreferencesPanelProps {
   // precedent as Theme/"Show session banners").
   sessionColorScheme: SessionColorScheme;
   onSessionColorSchemeChange: (scheme: SessionColorScheme) => void;
+  // CR-UI-40: when true, a single click on a session body only selects it — a double-click is
+  // required to trigger expand/collapse-all. Default false (today's single-click behavior).
+  expandOnDoubleClick: boolean;
+  onExpandOnDoubleClickChange: (value: boolean) => void;
+  // CR-UI-41: no longer called by a visible button in this panel — kept so BurgerMenu's
+  // outside-click/burger-icon-click handlers still have a close path to invoke.
   onClose: () => void;
 }
 
@@ -37,11 +43,17 @@ export function PreferencesPanel({
   onThemeChange,
   sessionColorScheme,
   onSessionColorSchemeChange,
-  onClose,
+  expandOnDoubleClick,
+  onExpandOnDoubleClickChange,
+  onClose: _onClose,
 }: PreferencesPanelProps) {
   return (
     <div className="modal-overlay" role="dialog" aria-label="Preferences">
-      <div className="modal">
+      {/* CR-UI-41: stops a click inside the panel (a select, checkbox, label text) from bubbling to
+          BurgerMenu's document-level outside-click listener, mirroring CR-UI-38's error-modal pattern
+          in ProjectPicker.tsx. `onClose` is no longer triggered by a visible button here — only by
+          BurgerMenu's outside-click/burger-icon-click handlers. */}
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Preferences</h2>
         <div className="pref-field">
           <label htmlFor="pref-layout-select">Default graph layout:</label>
@@ -124,9 +136,17 @@ export function PreferencesPanel({
             Show session banners
           </label>
         </div>
-        <button type="button" onClick={onClose}>
-          Close
-        </button>
+        <div className="pref-field">
+          <label htmlFor="pref-expand-on-double-click">
+            <input
+              id="pref-expand-on-double-click"
+              type="checkbox"
+              checked={expandOnDoubleClick}
+              onChange={(e) => onExpandOnDoubleClickChange(e.target.checked)}
+            />
+            Require double-click to expand/collapse
+          </label>
+        </div>
       </div>
     </div>
   );

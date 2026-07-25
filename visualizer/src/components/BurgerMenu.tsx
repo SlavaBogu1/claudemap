@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { LayoutName, SortName, TimeRangeName } from "../types";
 import type { SessionColorScheme, ThemeName } from "../lib/preferences";
 import { PreferencesPanel } from "./PreferencesPanel";
@@ -24,10 +24,16 @@ export interface BurgerMenuProps {
   // CR-UI-33: "Session color scheme" preference.
   sessionColorScheme: SessionColorScheme;
   onSessionColorSchemeChange: (scheme: SessionColorScheme) => void;
+  // CR-UI-40: "Require double-click to expand/collapse" preference.
+  expandOnDoubleClick: boolean;
+  onExpandOnDoubleClickChange: (value: boolean) => void;
   // CR-CORE-04 (Sprint 7): manual refresh — a direct action (not a panel), re-fetches the current
   // project's sessions and notes so deletions since the last load are reflected without a full page
   // reload.
   onRefresh: () => void;
+  // CR-UI-39: "Collapse All" — a direct action (not a panel), identical shape to onRefresh above.
+  // Resets every session's drill-down expansion state across the whole graph.
+  onCollapseAll: () => void;
 }
 
 export function BurgerMenu({
@@ -43,10 +49,36 @@ export function BurgerMenu({
   onThemeChange,
   sessionColorScheme,
   onSessionColorSchemeChange,
+  expandOnDoubleClick,
+  onExpandOnDoubleClickChange,
   onRefresh,
+  onCollapseAll,
 }: BurgerMenuProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<ActivePanel>(null);
+  // CR-UI-41: the burger icon itself is excluded from the outside-click-close check below — its own
+  // onClick already handles closing an open panel explicitly, so letting the document-level listener
+  // also react to that same click would double-handle it (see the onClick body's comment).
+  const burgerIconRef = useRef<HTMLButtonElement>(null);
+
+  // CR-UI-41: no existing outside-click-detection code anywhere in this codebase — new document-level
+  // `pointerdown` listener, attached only while a panel is open, that closes the panel when the click
+  // lands outside its `.modal` box. `.modal-overlay` (the full-screen backdrop all four panels render
+  // into) intentionally does NOT count as "inside" — clicking the backdrop (visually anywhere over the
+  // canvas/header, since the overlay sits on top of everything at z-index 100) must close the panel,
+  // only a click that lands inside the `.modal` box itself should not.
+  useEffect(() => {
+    if (activePanel === null) return;
+    function handlePointerDown(e: PointerEvent) {
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+      if (burgerIconRef.current?.contains(target)) return;
+      if (target.closest(".modal")) return;
+      setActivePanel(null);
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [activePanel]);
 
   return (
     <div className="burger-menu">
@@ -56,7 +88,18 @@ export function BurgerMenu({
         aria-label="Menu"
         aria-haspopup="true"
         aria-expanded={menuOpen}
-        onClick={() => setMenuOpen((v) => !v)}
+        ref={burgerIconRef}
+        onClick={() => {
+          // CR-UI-41: while a panel is open, clicking the icon closes that panel instead of also
+          // re-opening the dropdown list underneath it (today's bug this CR fixes) — only toggle the
+          // dropdown's own open/closed state when no panel is currently open.
+          if (activePanel !== null) {
+            setActivePanel(null);
+            setMenuOpen(false);
+          } else {
+            setMenuOpen((v) => !v);
+          }
+        }}
       >
         ☰
       </button>
@@ -122,6 +165,19 @@ export function BurgerMenu({
               Refresh
             </button>
           </li>
+          {/* CR-UI-39: a direct action (not a panel), identical shape/handler pattern to Refresh
+              above — collapses every session's expanded drill-down children across the whole graph. */}
+          <li role="menuitem">
+            <button
+              type="button"
+              onClick={() => {
+                onCollapseAll();
+                setMenuOpen(false);
+              }}
+            >
+              Collapse All
+            </button>
+          </li>
         </ul>
       )}
 
@@ -139,6 +195,8 @@ export function BurgerMenu({
           onThemeChange={onThemeChange}
           sessionColorScheme={sessionColorScheme}
           onSessionColorSchemeChange={onSessionColorSchemeChange}
+          expandOnDoubleClick={expandOnDoubleClick}
+          onExpandOnDoubleClickChange={onExpandOnDoubleClickChange}
           onClose={() => setActivePanel(null)}
         />
       )}

@@ -116,7 +116,8 @@ test.describe("CR-UI-10 — session sort control", () => {
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
     await page.getByLabel(/default sort/i).selectOption("agents-asc");
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+    await page.getByRole("button", { name: "Menu" }).click();
 
     await page.reload();
     await expect(page.getByLabel("Sort", { exact: true })).toHaveValue("agents-asc");
@@ -153,7 +154,8 @@ test.describe("CR-UI-10 — session sort control", () => {
 
     // Preferences -> header.
     await page.getByLabel(/default sort/i).selectOption("date-asc");
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+    await page.getByRole("button", { name: "Menu" }).click();
     await expect(page.getByLabel("Sort", { exact: true })).toHaveValue("date-asc");
   });
 });

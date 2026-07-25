@@ -9,7 +9,8 @@ async function setTheme(page: import("@playwright/test").Page, value: "light" | 
   await page.getByRole("button", { name: "Menu" }).click();
   await page.getByRole("menuitem", { name: "Preferences" }).click();
   await page.getByLabel(/^theme/i).selectOption(value);
-  await page.getByRole("button", { name: "Close" }).click();
+  // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+  await page.getByRole("button", { name: "Menu" }).click();
 }
 
 async function burgerIconColor(page: import("@playwright/test").Page): Promise<string> {

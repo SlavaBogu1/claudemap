@@ -163,6 +163,29 @@ export function setShowBanners(show: boolean): void {
   }
 }
 
+// CR-UI-40: "Require double-click to expand/collapse" on/off toggle, defaulting off — preserves
+// today's exact single-click-does-both behavior for anyone who never opens this setting. Mirrors
+// getShowBanners/setShowBanners exactly.
+const EXPAND_ON_DOUBLE_CLICK_PREF_KEY = "claudeMap.expandOnDoubleClick";
+
+export function getExpandOnDoubleClick(): boolean {
+  try {
+    const stored = localStorage.getItem(EXPAND_ON_DOUBLE_CLICK_PREF_KEY);
+    if (stored !== null) return stored === "true";
+  } catch {
+    // localStorage unavailable (e.g. disabled) — fall back to default
+  }
+  return false;
+}
+
+export function setExpandOnDoubleClick(show: boolean): void {
+  try {
+    localStorage.setItem(EXPAND_ON_DOUBLE_CLICK_PREF_KEY, String(show));
+  } catch {
+    // ignore write failures
+  }
+}
+
 // CR-UI-24 (Sprint 5): Light/Dark/System theme, defaulting to "system" (follows the OS preference
 // via `prefers-color-scheme`, matching pre-CR behavior for anyone who never opens this setting).
 export type ThemeName = "light" | "dark" | "system";

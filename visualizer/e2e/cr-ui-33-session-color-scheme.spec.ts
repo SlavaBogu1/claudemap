@@ -44,7 +44,8 @@ async function setScheme(page: import("@playwright/test").Page, value: string) {
   await page.getByRole("button", { name: "Menu" }).click();
   await page.getByRole("menuitem", { name: "Preferences" }).click();
   await page.getByLabel(/session color scheme/i).selectOption(value);
-  await page.getByRole("button", { name: "Close" }).click();
+  // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+  await page.getByRole("button", { name: "Menu" }).click();
 }
 
 test.describe("CR-UI-33 — Session color scheme", () => {
@@ -89,13 +90,15 @@ test.describe("CR-UI-33 — Session color scheme", () => {
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
     await page.getByLabel(/^theme/i).selectOption("light");
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+  await page.getByRole("button", { name: "Menu" }).click();
     const lightColor = await nodeColor(page, "s-high");
 
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
     await page.getByLabel(/^theme/i).selectOption("dark");
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+  await page.getByRole("button", { name: "Menu" }).click();
     const darkColor = await nodeColor(page, "s-high");
 
     expect(lightColor).not.toBe(darkColor);
@@ -173,7 +176,8 @@ test.describe("CR-UI-33 — Session color scheme", () => {
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
     await expect(page.getByLabel(/session color scheme/i)).toHaveValue("default");
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+  await page.getByRole("button", { name: "Menu" }).click();
 
     await setScheme(page, "durationGrad");
     await page.reload();

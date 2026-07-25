@@ -1,11 +1,15 @@
 export interface DocumentationPanelProps {
+  // CR-UI-41: no longer called by a visible button in this panel — kept so BurgerMenu's
+  // outside-click/burger-icon-click handlers still have a close path to invoke.
   onClose: () => void;
 }
 
-export function DocumentationPanel({ onClose }: DocumentationPanelProps) {
+export function DocumentationPanel({ onClose: _onClose }: DocumentationPanelProps) {
   return (
     <div className="modal-overlay" role="dialog" aria-label="Documentation">
-      <div className="modal">
+      {/* CR-UI-41: stops a click inside the panel from bubbling to BurgerMenu's document-level
+          outside-click listener, mirroring CR-UI-38's error-modal pattern in ProjectPicker.tsx. */}
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
         <h2>Documentation</h2>
         <div className="docs-content">
           <h3>Getting started</h3>
@@ -22,9 +26,6 @@ export function DocumentationPanel({ onClose }: DocumentationPanelProps) {
             load the app.
           </p>
         </div>
-        <button type="button" onClick={onClose}>
-          Close
-        </button>
       </div>
     </div>
   );

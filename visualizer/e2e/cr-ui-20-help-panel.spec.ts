@@ -13,7 +13,15 @@ test.describe("CR-UI-20 — Help burger-menu entry", () => {
     await page.goto("/");
     await page.getByRole("button", { name: "Menu" }).click();
     const items = page.getByRole("menuitem");
-    await expect(items).toHaveText(["Preferences", "Documentation", "About", "Help", "Refresh"]);
+    // CR-UI-39 added "Collapse All" as a 6th item.
+    await expect(items).toHaveText([
+      "Preferences",
+      "Documentation",
+      "About",
+      "Help",
+      "Refresh",
+      "Collapse All",
+    ]);
 
     await page.getByRole("menuitem", { name: "Help" }).click();
     await expect(page.getByRole("dialog", { name: /help/i })).toBeVisible();
@@ -44,7 +52,9 @@ test.describe("CR-UI-20 — Help burger-menu entry", () => {
     await expect(renderedLink).toHaveAttribute("href", "https://example.com");
   });
 
-  test("closing the Help panel works the same as Documentation/About", async ({ page }) => {
+  test("closing the Help panel works the same as Documentation/About (CR-UI-41: burger-icon click, no Close button)", async ({
+    page,
+  }) => {
     const project = makeProject({ id: "sudoku", sessionCount: 1 });
     await mockApi(page, { projects: [project], sessionsByProjectId: { sudoku: makeSessions(1) } });
 
@@ -53,7 +63,11 @@ test.describe("CR-UI-20 — Help burger-menu entry", () => {
     await page.getByRole("menuitem", { name: "Help" }).click();
     await expect(page.getByRole("dialog", { name: /help/i })).toBeVisible();
 
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: the explicit "Close" button is gone — inverted (not deleted) so a future
+    // accidental re-add is still caught.
+    await expect(page.getByRole("button", { name: "Close" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Menu" }).click();
     await expect(page.getByRole("dialog", { name: /help/i })).toHaveCount(0);
   });
 });

@@ -374,21 +374,24 @@ test.describe("CR-UI-07 — always-visible session summary banners", () => {
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
     await page.getByLabel(/show session banners/i).uncheck();
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+    await page.getByRole("button", { name: "Menu" }).click();
 
     await expect(page.getByTestId("session-banner-row")).toHaveCount(0);
 
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
     await page.getByLabel(/show session banners/i).check();
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+    await page.getByRole("button", { name: "Menu" }).click();
     await expect(page.getByTestId("session-banner-row").first()).toBeVisible();
 
     // Persists across reload.
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
     await page.getByLabel(/show session banners/i).uncheck();
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+    await page.getByRole("button", { name: "Menu" }).click();
     await page.reload();
     await page.getByLabel("Project", { exact: true }).selectOption("sudoku");
     await expect(page.getByTestId("session-banner-row")).toHaveCount(0);

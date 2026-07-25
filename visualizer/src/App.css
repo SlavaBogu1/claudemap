@@ -334,6 +334,13 @@
      Dark theme's near-black header background. Matches `.burger-dropdown li button`'s existing
      identical fix (below). */
   color: inherit;
+  /* CR-UI-41: `.modal-overlay`/`.error-backdrop` (z-index 100) are fixed, full-screen backdrops
+     rendered as this button's own sibling inside `.burger-menu` — without an explicit position +
+     higher z-index here, the overlay paints over the icon while a panel is open and a real click
+     on it never reaches the button at all, breaking the "burger-icon click closes an open panel"
+     behavior this CR adds. */
+  position: relative;
+  z-index: 101;
 }
 
 .burger-dropdown {

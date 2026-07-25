@@ -154,7 +154,8 @@ test.describe("CR-UI-27 — Time-range filter", () => {
     await expect(page.getByLabel(/default time range/i)).toHaveValue("week");
 
     await page.getByLabel(/default time range/i).selectOption("month");
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: "Close" button removed — burger-icon click now closes an open panel.
+    await page.getByRole("button", { name: "Menu" }).click();
     await expect(page.getByLabel("Time range", { exact: true })).toHaveValue("month");
   });
 

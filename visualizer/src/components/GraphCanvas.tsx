@@ -574,6 +574,14 @@ export interface GraphCanvasProps {
   // CR-UI-33 (Sprint 6): "Session color scheme" preference — recolors session backgrounds by
   // metric, normalized within the currently-displayed `sessions` (see `buildStylesheet`).
   sessionColorScheme: SessionColorScheme;
+  // CR-UI-39: incremented by App.tsx on each "Collapse All" burger-menu click. `expandedTypes`
+  // (below) has no other way for a parent to reach in and reset it — a `useEffect` watches this
+  // value and clears the map to empty whenever it changes.
+  collapseAllSignal?: number;
+  // CR-UI-40: when true, a session body's single click selects only (no expand/collapse-all); a
+  // double-click (Cytoscape's native `dbltap`) triggers expand/collapse-all instead. Default false
+  // preserves today's single-click-does-both behavior.
+  expandOnDoubleClick: boolean;
 }
 
 // CR-UI-10: pure sort step, pulled out for unit testing. A plain `.slice().sort(...)` — no
@@ -754,6 +762,8 @@ export function GraphCanvas({
   notedKeys,
   theme,
   sessionColorScheme,
+  collapseAllSignal,
+  expandOnDoubleClick,
 }: GraphCanvasProps) {
   const cyRef = useRef<Core | null>(null);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -814,6 +824,15 @@ export function GraphCanvas({
     setExpandedTypes(new Map());
     setSessionDetails(new Map());
   }, [project.id]);
+
+  // CR-UI-39: "Collapse All" resets every session's drill-down expansion state at once, regardless
+  // of the current time-range filter/sort/layout — the whole map, not just currently-visible
+  // sessions. `collapseAllSignal` is a plain incrementing counter (App.tsx), so any change (including
+  // the very first mount, a harmless no-op since the map already starts empty) clears it.
+  useEffect(() => {
+    if (collapseAllSignal === undefined) return;
+    setExpandedTypes(new Map());
+  }, [collapseAllSignal]);
 
   // CR-UI-07: on-screen (rendered, relative to `.graph-canvas-wrapper`) position for each session's
   // always-visible banner row, tracked as plain React state since the banners are a real HTML
@@ -1277,7 +1296,12 @@ export function GraphCanvas({
                 label: node.data("label"),
                 sessionId: node.id(),
               });
-              void toggleAllTypesForSession(node.id());
+              // CR-UI-40: selection above always fires on a single tap regardless of the preference.
+              // The expand/collapse-all toggle only fires from this `tap` handler when the
+              // preference is off (today's behavior); when on, it's wired to `dbltap` instead (below).
+              if (!expandOnDoubleClick) {
+                void toggleAllTypesForSession(node.id());
+              }
             } else if (type === "subagent" || type === "memory" || type === "tool" || type === "file") {
               // CR-UI-08: drill-down child nodes are now selectable too (previously inert), driving
               // the Detail panel's Content tab for whichever item type is clicked.
@@ -1297,6 +1321,17 @@ export function GraphCanvas({
               });
             } else if (type === "project") {
               onSelectItem({ nodeType: "project", rawId: node.data("rawId"), label: node.data("label") });
+            }
+          });
+          // CR-UI-40: Cytoscape's native `dbltap` gesture (not a hand-rolled click-timing
+          // implementation) — only fires expand/collapse-all for session nodes when the preference
+          // is on; the `tap` handler above already covers the off (default) case.
+          cy.off("dbltap", "node");
+          cy.on("dbltap", "node", (evt) => {
+            if (!expandOnDoubleClick) return;
+            const node = evt.target;
+            if (node.data("type") === "session") {
+              void toggleAllTypesForSession(node.id());
             }
           });
           cy.off("layoutstop");

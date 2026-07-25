@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(path.resolve(__dirname, "../package.json"), "utf-8"));
 
 test.describe("CR-UI-02 — burger menu", () => {
-  test("shows exactly 5 items: Preferences, Documentation, About, Help, Refresh (CR-UI-20, CR-CORE-04)", async ({
+  test("shows exactly 6 items: Preferences, Documentation, About, Help, Refresh, Collapse All (CR-UI-20, CR-CORE-04, CR-UI-39)", async ({
     page,
   }) => {
     await mockApi(page, { projects: [], sessionsByProjectId: {} });
@@ -16,12 +16,13 @@ test.describe("CR-UI-02 — burger menu", () => {
 
     await page.getByRole("button", { name: "Menu" }).click();
     const items = page.getByRole("menuitem");
-    await expect(items).toHaveCount(5);
+    await expect(items).toHaveCount(6);
     await expect(items.nth(0)).toHaveText("Preferences");
     await expect(items.nth(1)).toHaveText("Documentation");
     await expect(items.nth(2)).toHaveText("About");
     await expect(items.nth(3)).toHaveText("Help");
     await expect(items.nth(4)).toHaveText("Refresh");
+    await expect(items.nth(5)).toHaveText("Collapse All");
   });
 
   test("a saved layout preference persists across reload as the initial layout", async ({ page }) => {
@@ -32,7 +33,9 @@ test.describe("CR-UI-02 — burger menu", () => {
     await page.getByRole("button", { name: "Menu" }).click();
     await page.getByRole("menuitem", { name: "Preferences" }).click();
     await page.getByLabel(/default graph layout/i).selectOption("breadthfirst");
-    await page.getByRole("button", { name: "Close" }).click();
+    // CR-UI-41: the explicit "Close" button was removed — closing an open panel is now done via
+    // burger-icon click (or an outside click, covered separately in cr-ui-41-*.spec.ts).
+    await page.getByRole("button", { name: "Menu" }).click();
 
     await page.reload();
     // Initial layout dropdown state should now reflect the persisted preference, not the cose default.
